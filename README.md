@@ -1,0 +1,1 @@
+This is an implementation of the Lox programming language from [Crafting Interpreters](https://craftinginterpreters.com/), by Bob Nystrom, 100% human written in Rust.
