@@ -8,10 +8,12 @@ use crate::interpreter::Interpreter;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 
+mod ast;
 mod environment;
 mod errors;
-mod expr;
+mod function;
 mod interpreter;
+mod native_functions;
 mod operator_type;
 mod parser;
 mod scanner;
@@ -73,24 +75,8 @@ impl Lox {
     }
 
     fn report_error(&self, error: LoxError) {
-        match error {
-            LoxError::SyntaxError { token, message } => {
-                let line = token.line;
-                let lexeme = token.lexeme;
-                println!("Syntax error at line {line} at token {lexeme}: {message}")
-            }
-            LoxError::DivideByZeroError { token } => {
-                let line = token.line;
-                let lexeme = token.lexeme;
-                println!("Error at line {line} at token {lexeme}: Can't divide by zero.")
-            }
-            LoxError::UndefinedVariable { name } => {
-                println!("Undefined variable: {name}")
-            }
-            _ => {
-                println!("Error: {error}")
-            }
-        }
+        // TODO: can delete this and replace
+        println!("{}", error);
     }
 
     fn run(&mut self, source: String) -> Result<(), LoxError> {

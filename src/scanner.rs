@@ -108,7 +108,10 @@ impl Scanner {
                 } else if c.is_alphabetic() {
                     self.identifier()
                 } else {
-                    Err(LoxError::BadInputToken)
+                    Err(LoxError::BadInputToken {
+                        line: self.line,
+                        character: c,
+                    })
                 }
             }
         }

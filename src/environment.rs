@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{errors::LoxError, expr::Literal};
+use crate::{ast::Literal, errors::LoxError};
 
 #[derive(Debug)]
 pub struct Environment {
@@ -39,7 +39,7 @@ impl Environment {
                     environment.borrow_mut().assign(namestring, value)?;
                     Ok(())
                 }
-                None => Err(LoxError::UndefinedVariable { name: namestring }),
+                None => Err(LoxError::UndefinedVariable(namestring)),
             }
         }
     }
@@ -49,7 +49,7 @@ impl Environment {
             Some(value) => Ok(value.clone()),
             None => match &self.enclosing {
                 Some(environment) => environment.borrow().get(name),
-                None => Err(LoxError::UndefinedVariable { name: name.into() }),
+                None => Err(LoxError::UndefinedVariable(name.into())),
             },
         }
     }

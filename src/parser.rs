@@ -1,6 +1,6 @@
 use crate::{
+    ast::{Expr, FunctionDeclaration, FunctionKind, Literal, Stmt},
     errors::LoxError,
-    expr::{Expr, Literal, Stmt},
     operator_type::{BinaryOp, BinaryOpType, LogicalOp, LogicalOpType, UnaryOp, UnaryOpType},
     token::Token,
     token_type::TokenType,
@@ -11,11 +11,13 @@ pub struct Parser {
     current: usize,
 }
 
+// TODO: this whole thing could use less memory by actually consuming each token rather than leaving the vector intact
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Parser { tokens, current: 0 }
     }
 
+    // TODO: maybe these should be a specific subtype of LoxError, like SyntaxError
     pub fn parse(&mut self) -> Result<Vec<Stmt>, LoxError> {
         // TODO: return all the errors not just the top one
         let mut statements: Vec<Stmt> = vec![];
@@ -26,13 +28,17 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Result<Stmt, LoxError> {
-        let result = if let Some(token) = self.peek()
-            && matches!(token.token_type, TokenType::Var)
-        {
-            self.advance()?;
-            self.var_declaration()
-        } else {
-            self.statement()
+        let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+        let result = match token.token_type {
+            TokenType::Var => {
+                self.advance()?;
+                self.var_declaration()
+            }
+            TokenType::Fun => {
+                self.advance()?;
+                self.function(FunctionKind::Function)
+            }
+            _ => self.statement(),
         };
         if result.is_err() {
             self.synchronize();
@@ -95,6 +101,10 @@ impl Parser {
                     self.advance()?;
                     return self.for_statement();
                 }
+                TokenType::Return => {
+                    self.advance()?;
+                    return self.return_statement();
+                }
                 _ => {}
             }
         }
@@ -149,10 +159,81 @@ impl Parser {
         Ok(Stmt::Print(expression))
     }
 
+    fn return_statement(&mut self) -> Result<Stmt, LoxError> {
+        let keyword = self.previous()?;
+        let peeked = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+        let value = match peeked.token_type {
+            TokenType::Semicolon => None,
+            _ => Some(self.expression()?),
+        };
+        self.consume(TokenType::Semicolon, "Expect ';' after return value.")?;
+        Ok(Stmt::Return { keyword, value })
+    }
+
     fn expression_statement(&mut self) -> Result<Stmt, LoxError> {
         let expression = self.expression()?;
         self.consume(TokenType::Semicolon, "Expect ';' after expression.")?;
         Ok(Stmt::Expression(expression))
+    }
+
+    fn function(&mut self, kind: FunctionKind) -> Result<Stmt, LoxError> {
+        let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+        let name = match &token.token_type {
+            TokenType::Identifier(name) => {
+                let name = name.clone();
+                self.advance()?;
+                name
+            }
+            _ => {
+                return Err(LoxError::SyntaxError {
+                    token: token.clone(),
+                    message: format!("Expect {kind} name."),
+                });
+            }
+        };
+        self.consume(
+            TokenType::LeftParen,
+            format!("Expect '(' after {kind} name."),
+        )?;
+        let mut params = vec![];
+        if !self.check(TokenType::RightParen) {
+            loop {
+                // TODO: can I avoid cloning the token here?
+                let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?.clone();
+                let parameter_name = match &token.token_type {
+                    TokenType::Identifier(name) => {
+                        self.advance()?;
+                        // TODO: and the name here?
+                        name.clone()
+                    }
+                    _ => {
+                        return Err(LoxError::SyntaxError {
+                            token,
+                            message: format!("Expected parameter name"),
+                        });
+                    }
+                };
+                if params.len() >= 255 {
+                    return Err(LoxError::SyntaxError {
+                        token,
+                        message: format!("Too many parameters for function {parameter_name}"),
+                    });
+                }
+                params.push(parameter_name.clone());
+                let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?.clone();
+                if token.token_type != TokenType::Comma {
+                    break;
+                }
+                self.advance()?;
+            }
+        }
+        self.consume(TokenType::RightParen, "Expect ')' after parameter list.")?;
+        self.consume(
+            TokenType::LeftBrace,
+            format!("Expected '{{' before {kind} body"),
+        )?;
+        let body = self.block()?;
+        Ok(Stmt::Function(FunctionDeclaration { name, params, body }))
     }
 
     fn if_statement(&mut self) -> Result<Stmt, LoxError> {
@@ -396,8 +477,57 @@ impl Parser {
                 right: Box::new(right),
             })
         } else {
-            self.primary()
+            self.call()
         }
+    }
+
+    fn call(&mut self) -> Result<Expr, LoxError> {
+        let mut expr = self.primary()?;
+        loop {
+            let peeked = self.peek();
+            let token = match peeked {
+                Some(token) => token,
+                None => break,
+            };
+            if token.token_type != TokenType::LeftParen {
+                break;
+            }
+            self.advance()?;
+            expr = self.finish_call(expr)?;
+        }
+        Ok(expr)
+    }
+
+    fn finish_call(&mut self, callee: Expr) -> Result<Expr, LoxError> {
+        let mut arguments: Vec<Expr> = vec![];
+        if !self.check(TokenType::RightParen) {
+            if arguments.len() >= 255 {
+                return Err(LoxError::SyntaxError {
+                    token: self
+                        .peek()
+                        .ok_or(LoxError::UnexpectedEndOfPhrase)?
+                        .to_owned(),
+                    message: "Can't have more than 255 arguments".to_string(),
+                });
+            };
+            arguments.push(self.expression()?);
+            loop {
+                let peeked = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+                match peeked.token_type {
+                    TokenType::Comma => {
+                        self.advance()?;
+                        arguments.push(self.expression()?)
+                    }
+                    _ => break,
+                };
+            }
+        };
+        let paren = self.consume(TokenType::RightParen, "Expect ')' after arguments")?;
+        Ok(Expr::Call {
+            callee: Box::new(callee),
+            paren,
+            arguments,
+        })
     }
 
     fn primary(&mut self) -> Result<Expr, LoxError> {
@@ -426,14 +556,18 @@ impl Parser {
         }
     }
 
-    fn consume(&mut self, token_type: TokenType, message: &str) -> Result<Token, LoxError> {
+    fn consume(
+        &mut self,
+        token_type: TokenType,
+        message: impl Into<String>,
+    ) -> Result<Token, LoxError> {
         if self.check(token_type) {
             self.advance()
         } else {
             let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?.clone();
             Err(LoxError::SyntaxError {
                 token,
-                message: message.to_string(),
+                message: message.into(),
             })
         }
     }
