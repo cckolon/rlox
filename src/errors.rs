@@ -5,7 +5,6 @@ use crate::{ast::Literal, token::Token};
 #[derive(Debug)]
 pub enum LoxError {
     BadInputToken { line: usize, character: char },
-    NoPreviousValue,
     UnterminatedString,
     UnexpectedEndOfPhrase,
     ParseFloatError,
@@ -23,7 +22,6 @@ impl fmt::Display for LoxError {
             Self::BadInputToken { line, character } => {
                 write!(f, "Bad input token on line {line}: {character}")
             }
-            Self::NoPreviousValue => write!(f, "No previous value"),
             Self::UnterminatedString => write!(f, "Unterminated string"),
             Self::UnexpectedEndOfPhrase => write!(f, "Unexpected end of phrase"),
             Self::ParseFloatError => write!(f, "Parse float error"),

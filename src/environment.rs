@@ -63,9 +63,9 @@ impl Environment {
             .borrow()
             .values
             .get(name)
-            .ok_or(LoxError::InternalError(format!(
-                "value matching {name} not found in environment at depth {distance}"
-            )))?
+            .ok_or_else(|| {
+                panic!("value matching {name} not found in environment at depth {distance}")
+            })?
             .clone())
     }
 
@@ -89,9 +89,7 @@ impl Environment {
                 .borrow()
                 .enclosing
                 .clone()
-                .ok_or(LoxError::InternalError(
-                    "No enclosing scope at this distance".to_string(),
-                ))?;
+                .expect("No enclosing scope at this distance");
             environment = next;
         }
         Ok(environment)

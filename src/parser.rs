@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use crate::{
     ast::{Expr, ExprKind, FunctionDeclaration, FunctionKind, Literal, Stmt},
     errors::LoxError,
@@ -7,8 +9,7 @@ use crate::{
 };
 
 pub struct Parser {
-    tokens: Vec<Token>,
-    current: usize,
+    tokens: VecDeque<Token>,
     next_expr_id: usize,
 }
 
@@ -16,8 +17,7 @@ pub struct Parser {
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Parser {
-            tokens,
-            current: 0,
+            tokens: tokens.into(),
             next_expr_id: 0,
         }
     }
@@ -42,11 +42,11 @@ impl Parser {
         let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
         let result = match token.token_type {
             TokenType::Var => {
-                self.advance()?;
+                self.advance();
                 self.var_declaration()
             }
             TokenType::Fun => {
-                self.advance()?;
+                self.advance();
                 self.function(FunctionKind::Function)
             }
             _ => self.statement(),
@@ -59,17 +59,12 @@ impl Parser {
 
     fn var_declaration(&mut self) -> Result<Stmt, LoxError> {
         // TODO: rework this to combine with consume. Can prob do with generic
-        let peeked = self.peek();
-        let token = peeked.ok_or(LoxError::UnexpectedEndOfPhrase)?;
-        let name = match &token.token_type {
-            TokenType::Identifier(name) => {
-                let name = name.clone();
-                self.advance()?;
-                name
-            }
+        let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+        let name = match token.token_type {
+            TokenType::Identifier(name) => name,
             _ => {
                 return Err(LoxError::SyntaxError {
-                    token: token.clone(),
+                    token,
                     message: "Expected identifier".to_string(),
                 });
             }
@@ -77,7 +72,7 @@ impl Parser {
         let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
         let initializer = match token.token_type {
             TokenType::Equal => {
-                self.advance()?;
+                self.advance();
                 Some(self.expression()?)
             }
             _ => None,
@@ -93,28 +88,28 @@ impl Parser {
         if let Some(token) = self.peek() {
             match token.token_type {
                 TokenType::Print => {
-                    self.advance()?;
+                    self.advance();
                     return self.print_statement();
                 }
                 TokenType::LeftBrace => {
-                    self.advance()?;
+                    self.advance();
                     return Ok(Stmt::Block(self.block()?));
                 }
                 TokenType::If => {
-                    self.advance()?;
+                    self.advance();
                     return self.if_statement();
                 }
                 TokenType::While => {
-                    self.advance()?;
+                    self.advance();
                     return self.while_statement();
                 }
                 TokenType::For => {
-                    self.advance()?;
+                    self.advance();
                     return self.for_statement();
                 }
                 TokenType::Return => {
-                    self.advance()?;
-                    return self.return_statement();
+                    let keyword = self.advance_or_panic();
+                    return self.return_statement(keyword);
                 }
                 _ => {}
             }
@@ -127,11 +122,11 @@ impl Parser {
         let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
         let initializer = match token.token_type {
             TokenType::Semicolon => {
-                self.advance()?;
+                self.advance();
                 None
             }
             TokenType::Var => {
-                self.advance()?;
+                self.advance();
                 Some(self.var_declaration()?)
             }
             _ => Some(self.expression_statement()?),
@@ -170,8 +165,7 @@ impl Parser {
         Ok(Stmt::Print(expression))
     }
 
-    fn return_statement(&mut self) -> Result<Stmt, LoxError> {
-        let keyword = self.previous()?;
+    fn return_statement(&mut self, keyword: Token) -> Result<Stmt, LoxError> {
         let peeked = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
         let value = match peeked.token_type {
             TokenType::Semicolon => None,
@@ -188,16 +182,12 @@ impl Parser {
     }
 
     fn function(&mut self, kind: FunctionKind) -> Result<Stmt, LoxError> {
-        let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
-        let name = match &token.token_type {
-            TokenType::Identifier(name) => {
-                let name = name.clone();
-                self.advance()?;
-                name
-            }
+        let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+        let name = match token.token_type {
+            TokenType::Identifier(name) => name,
             _ => {
                 return Err(LoxError::SyntaxError {
-                    token: token.clone(),
+                    token,
                     message: format!("Expect {kind} name."),
                 });
             }
@@ -209,14 +199,15 @@ impl Parser {
         let mut params = vec![];
         if !self.check(TokenType::RightParen) {
             loop {
-                // TODO: can I avoid cloning the token here?
-                let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?.clone();
-                let parameter_name = match &token.token_type {
-                    TokenType::Identifier(name) => {
-                        self.advance()?;
-                        // TODO: and the name here?
-                        name.clone()
-                    }
+                let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+                if params.len() >= 255 {
+                    return Err(LoxError::SyntaxError {
+                        token,
+                        message: format!("Too many parameters for function {name}"),
+                    });
+                }
+                let parameter_name = match token.token_type {
+                    TokenType::Identifier(name) => name,
                     _ => {
                         return Err(LoxError::SyntaxError {
                             token,
@@ -224,18 +215,12 @@ impl Parser {
                         });
                     }
                 };
-                if params.len() >= 255 {
-                    return Err(LoxError::SyntaxError {
-                        token,
-                        message: format!("Too many parameters for function {parameter_name}"),
-                    });
-                }
-                params.push(parameter_name.clone());
-                let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?.clone();
+                params.push(parameter_name);
+                let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
                 if token.token_type != TokenType::Comma {
                     break;
                 }
-                self.advance()?;
+                self.advance();
             }
         }
         self.consume(TokenType::RightParen, "Expect ')' after parameter list.")?;
@@ -255,7 +240,7 @@ impl Parser {
         let peeked = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
         let else_branch = match peeked.token_type {
             TokenType::Else => {
-                self.advance()?;
+                self.advance();
                 Some(Box::new(self.statement()?))
             }
             _ => None,
@@ -296,8 +281,7 @@ impl Parser {
         if let Some(token) = self.peek()
             && token.token_type == TokenType::Equal
         {
-            self.advance()?;
-            let equals = self.previous()?;
+            let equals = self.advance_or_panic();
             let value = self.assignment()?;
             match expr.kind {
                 ExprKind::Variable { name } => Ok(self.expr(ExprKind::Assign {
@@ -316,43 +300,30 @@ impl Parser {
 
     fn or(&mut self) -> Result<Expr, LoxError> {
         let mut expr = self.and()?;
-        fn or_op(token: &Token) -> Option<LogicalOp> {
-            if token.token_type == TokenType::Or {
-                Some(LogicalOp {
-                    op_type: LogicalOpType::Or,
-                    token: token.clone(),
-                })
-            } else {
-                None
-            }
-        }
-        while let Some(operator) = self.peek().and_then(or_op) {
-            self.advance()?;
-            let right = Box::new(self.and()?);
+        while matches!(self.peek().map(|t| &t.token_type), Some(TokenType::Or)) {
+            let token = self.advance_or_panic();
+            let operator = LogicalOp {
+                op_type: LogicalOpType::Or,
+                token,
+            };
+            let right = Box::new(self.equality()?);
             expr = self.expr(ExprKind::Logical {
                 left: Box::new(expr),
                 operator,
                 right,
             })
         }
-
         Ok(expr)
     }
 
     fn and(&mut self) -> Result<Expr, LoxError> {
         let mut expr = self.equality()?;
-        fn and_op(token: &Token) -> Option<LogicalOp> {
-            if token.token_type == TokenType::And {
-                Some(LogicalOp {
-                    op_type: LogicalOpType::And,
-                    token: token.clone(),
-                })
-            } else {
-                None
-            }
-        }
-        while let Some(operator) = self.peek().and_then(and_op) {
-            self.advance()?;
+        while matches!(self.peek().map(|t| &t.token_type), Some(TokenType::And)) {
+            let token = self.advance_or_panic();
+            let operator = LogicalOp {
+                op_type: LogicalOpType::And,
+                token,
+            };
             let right = Box::new(self.equality()?);
             expr = self.expr(ExprKind::Logical {
                 left: Box::new(expr),
@@ -364,20 +335,17 @@ impl Parser {
     }
 
     fn equality(&mut self) -> Result<Expr, LoxError> {
-        fn equality_op(token: &Token) -> Option<BinaryOp> {
-            let op_type = match token.token_type {
-                TokenType::BangEqual => BinaryOpType::NotEqual,
-                TokenType::EqualEqual => BinaryOpType::Equal,
-                _ => return None,
-            };
-            Some(BinaryOp {
-                op_type,
-                token: token.clone(),
-            })
+        fn equality_op(token: &Token) -> Option<BinaryOpType> {
+            match token.token_type {
+                TokenType::BangEqual => Some(BinaryOpType::NotEqual),
+                TokenType::EqualEqual => Some(BinaryOpType::Equal),
+                _ => None,
+            }
         }
         let mut expr = self.comparison()?;
-        while let Some(operator) = self.peek().and_then(equality_op) {
-            self.advance()?;
+        while let Some(op_type) = self.peek().and_then(equality_op) {
+            let token = self.advance_or_panic();
+            let operator = BinaryOp { op_type, token };
             let right = Box::new(self.comparison()?);
             expr = self.expr(ExprKind::Binary {
                 left: Box::new(expr),
@@ -390,22 +358,19 @@ impl Parser {
     }
 
     fn comparison(&mut self) -> Result<Expr, LoxError> {
-        fn comparison_op(token: &Token) -> Option<BinaryOp> {
-            let op_type = match token.token_type {
-                TokenType::Greater => BinaryOpType::GreaterThan,
-                TokenType::GreaterEqual => BinaryOpType::GreaterThanEqualTo,
-                TokenType::Less => BinaryOpType::LessThan,
-                TokenType::LessEqual => BinaryOpType::LessThanEqualTo,
-                _ => return None,
-            };
-            Some(BinaryOp {
-                op_type,
-                token: token.clone(),
-            })
+        fn comparison_op_type(token: &Token) -> Option<BinaryOpType> {
+            match token.token_type {
+                TokenType::Greater => Some(BinaryOpType::GreaterThan),
+                TokenType::GreaterEqual => Some(BinaryOpType::GreaterThanEqualTo),
+                TokenType::Less => Some(BinaryOpType::LessThan),
+                TokenType::LessEqual => Some(BinaryOpType::LessThanEqualTo),
+                _ => None,
+            }
         }
         let mut expr = self.term()?;
-        while let Some(operator) = self.peek().and_then(comparison_op) {
-            self.advance()?;
+        while let Some(op_type) = self.peek().and_then(comparison_op_type) {
+            let token = self.advance_or_panic();
+            let operator = BinaryOp { op_type, token };
             let right = self.term()?;
             expr = self.expr(ExprKind::Binary {
                 left: Box::new(expr),
@@ -417,20 +382,17 @@ impl Parser {
     }
 
     fn term(&mut self) -> Result<Expr, LoxError> {
-        fn term_op(token: &Token) -> Option<BinaryOp> {
-            let op_type = match token.token_type {
-                TokenType::Minus => BinaryOpType::Subtract,
-                TokenType::Plus => BinaryOpType::Add,
-                _ => return None,
-            };
-            Some(BinaryOp {
-                op_type,
-                token: token.clone(),
-            })
+        fn term_op_type(token: &Token) -> Option<BinaryOpType> {
+            match token.token_type {
+                TokenType::Minus => Some(BinaryOpType::Subtract),
+                TokenType::Plus => Some(BinaryOpType::Add),
+                _ => None,
+            }
         }
         let mut expr = self.factor()?;
-        while let Some(operator) = self.peek().and_then(term_op) {
-            self.advance()?;
+        while let Some(op_type) = self.peek().and_then(term_op_type) {
+            let token = self.advance_or_panic();
+            let operator = BinaryOp { op_type, token };
             let right = self.factor()?;
             expr = self.expr(ExprKind::Binary {
                 left: Box::new(expr),
@@ -442,20 +404,17 @@ impl Parser {
     }
 
     fn factor(&mut self) -> Result<Expr, LoxError> {
-        fn factor_op(token: &Token) -> Option<BinaryOp> {
-            let op_type = match token.token_type {
-                TokenType::Slash => BinaryOpType::Divide,
-                TokenType::Star => BinaryOpType::Multiply,
-                _ => return None,
-            };
-            Some(BinaryOp {
-                op_type,
-                token: token.clone(),
-            })
+        fn factor_op_type(token: &Token) -> Option<BinaryOpType> {
+            match token.token_type {
+                TokenType::Slash => Some(BinaryOpType::Divide),
+                TokenType::Star => Some(BinaryOpType::Multiply),
+                _ => None,
+            }
         }
         let mut expr = self.unary()?;
-        while let Some(operator) = self.peek().and_then(factor_op) {
-            self.advance()?;
+        while let Some(op_type) = self.peek().and_then(factor_op_type) {
+            let token = self.advance_or_panic();
+            let operator = BinaryOp { op_type, token };
             let right = self.unary()?;
             expr = self.expr(ExprKind::Binary {
                 left: Box::new(expr),
@@ -467,21 +426,14 @@ impl Parser {
     }
 
     fn unary(&mut self) -> Result<Expr, LoxError> {
-        fn unary_op(token: &Token) -> Option<UnaryOp> {
-            match token.token_type {
-                TokenType::Bang => Some(UnaryOpType::Not),
-                TokenType::Minus => Some(UnaryOpType::Negative),
-                _ => None,
-            }
-            .and_then(|op_type| {
-                Some(UnaryOp {
-                    op_type,
-                    token: token.clone(),
-                })
-            })
-        }
-        if let Some(operator) = self.peek().and_then(unary_op) {
-            self.advance()?;
+        let op_type = self.peek().and_then(|t| match t.token_type {
+            TokenType::Bang => Some(UnaryOpType::Not),
+            TokenType::Minus => Some(UnaryOpType::Negative),
+            _ => None,
+        });
+        if let Some(op_type) = op_type {
+            let token = self.advance_or_panic();
+            let operator = UnaryOp { op_type, token };
             let right = self.unary()?;
             Ok(self.expr(ExprKind::Unary {
                 operator,
@@ -503,7 +455,7 @@ impl Parser {
             if token.token_type != TokenType::LeftParen {
                 break;
             }
-            self.advance()?;
+            self.advance();
             expr = self.finish_call(expr)?;
         }
         Ok(expr)
@@ -526,7 +478,7 @@ impl Parser {
                 let peeked = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
                 match peeked.token_type {
                     TokenType::Comma => {
-                        self.advance()?;
+                        self.advance();
                         arguments.push(self.expression()?)
                     }
                     _ => break,
@@ -545,17 +497,13 @@ impl Parser {
         if self.peek().is_none() {
             return Err(LoxError::UnexpectedEndOfPhrase);
         }
-        let token = self.advance()?;
-        match &token.token_type {
+        let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+        match token.token_type {
             TokenType::False => Ok(self.expr(ExprKind::Literal(Literal::Bool(false)))),
             TokenType::True => Ok(self.expr(ExprKind::Literal(Literal::Bool(true)))),
             TokenType::Nil => Ok(self.expr(ExprKind::Literal(Literal::Nil))),
-            TokenType::Number(value) => {
-                Ok(self.expr(ExprKind::Literal(Literal::Number(value.clone()))))
-            }
-            TokenType::String(value) => {
-                Ok(self.expr(ExprKind::Literal(Literal::String(value.clone()))))
-            }
+            TokenType::Number(value) => Ok(self.expr(ExprKind::Literal(Literal::Number(value)))),
+            TokenType::String(value) => Ok(self.expr(ExprKind::Literal(Literal::String(value)))),
             TokenType::LeftParen => {
                 let expr = self.expression()?;
                 self.consume(TokenType::RightParen, "Expect ')' after expression.")?;
@@ -563,9 +511,9 @@ impl Parser {
                     expression: Box::new(expr),
                 }))
             }
-            TokenType::Identifier(name) => Ok(self.expr(ExprKind::Variable { name: name.clone() })),
+            TokenType::Identifier(name) => Ok(self.expr(ExprKind::Variable { name })),
             _ => Err(LoxError::SyntaxError {
-                token: token.clone(),
+                token,
                 message: "Expect expression".to_string(),
             }),
         }
@@ -577,9 +525,9 @@ impl Parser {
         message: impl Into<String>,
     ) -> Result<Token, LoxError> {
         if self.check(token_type) {
-            self.advance()
+            Ok(self.advance_or_panic())
         } else {
-            let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?.clone();
+            let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
             Err(LoxError::SyntaxError {
                 token,
                 message: message.into(),
@@ -587,83 +535,62 @@ impl Parser {
         }
     }
 
-    fn previous(&self) -> Result<Token, LoxError> {
-        let prev_token = self.tokens.get(self.current - 1);
-        match prev_token {
-            Some(token) => Ok(token.clone()),
-            None => Err(LoxError::NoPreviousValue),
-        }
-    }
-
     fn check(&self, token_type: TokenType) -> bool {
-        if self.is_at_end() {
-            false
-        } else {
-            let peeked = self.peek();
-            match peeked {
-                None => false,
-                Some(token) => token.token_type == token_type,
-            }
+        let peeked = self.peek();
+        match peeked {
+            None => false,
+            Some(token) => token.token_type == token_type,
         }
     }
 
-    fn advance(&mut self) -> Result<Token, LoxError> {
-        if !self.is_at_end() {
-            self.current += 1;
-        }
-        self.previous()
+    fn advance(&mut self) -> Option<Token> {
+        self.tokens.pop_front()
     }
 
+    fn advance_or_panic(&mut self) -> Token {
+        self.advance()
+            .expect("Tried to advance, but no token was found.")
+    }
+
+    // TODO: should be able to delete this and check and just use advance and peek
     fn is_at_end(&self) -> bool {
         let peeked = self.peek();
         peeked.is_none()
     }
 
     fn peek(&self) -> Option<&Token> {
-        let current_token = self.tokens.get(self.current);
-        match current_token {
-            None => None,
-            Some(token) => {
-                if token.token_type == TokenType::Eof {
-                    None
-                } else {
-                    Some(token)
-                }
-            }
-        }
+        self.tokens
+            .front()
+            .filter(|token| token.token_type != TokenType::Eof)
     }
 
     fn synchronize(&mut self) {
-        self.advance()
-            .expect("failed to advance while handling error");
+        let mut last_token = self.advance();
         loop {
-            if let Ok(token) = self.previous()
+            if let Some(token) = last_token
                 && token.token_type == TokenType::Semicolon
             {
                 return;
             }
-            let peeked = self.peek();
-            match peeked {
-                None => {
-                    break;
+            match self.peek() {
+                None => return,
+                Some(token) => {
+                    if matches!(
+                        token.token_type,
+                        TokenType::Class
+                            | TokenType::For
+                            | TokenType::Fun
+                            | TokenType::If
+                            | TokenType::Print
+                            | TokenType::Return
+                            | TokenType::Var
+                            | TokenType::While
+                    ) {
+                        return;
+                    }
                 }
-                Some(token) => match token.token_type {
-                    TokenType::Class
-                    | TokenType::For
-                    | TokenType::Fun
-                    | TokenType::If
-                    | TokenType::Print
-                    | TokenType::Return
-                    | TokenType::Var
-                    | TokenType::While => {
-                        break;
-                    }
-                    _ => {
-                        self.advance()
-                            .expect("failed to advance while handling error");
-                    }
-                },
             }
+            last_token = self.advance();
         }
     }
 }

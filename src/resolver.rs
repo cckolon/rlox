@@ -33,7 +33,7 @@ impl<'a> Resolver<'a> {
             Stmt::Block(statements) => {
                 self.begin_scope();
                 self.resolve_multiple_statements(statements)?;
-                self.end_scope()?;
+                self.end_scope();
                 Ok(())
             }
             Stmt::Expression(expression) => self.resolve_expression(expression),
@@ -148,7 +148,7 @@ impl<'a> Resolver<'a> {
             self.define(param);
         }
         self.resolve_multiple_statements(&function.body)?;
-        self.end_scope()?;
+        self.end_scope();
         self.current_function = enclosing_function;
         Ok(())
     }
@@ -157,11 +157,8 @@ impl<'a> Resolver<'a> {
         self.scopes.push(HashMap::new());
     }
 
-    fn end_scope(&mut self) -> Result<(), LoxError> {
-        match self.scopes.pop() {
-            None => Err(LoxError::InternalError("No scopes left to pop".to_string())),
-            Some(_scope) => Ok(()),
-        }
+    fn end_scope(&mut self) {
+        self.scopes.pop().expect("No scopes left to pop");
     }
 
     fn declare(&mut self, name: impl Into<String>) -> Result<(), LoxError> {
