@@ -11,6 +11,7 @@ pub enum LoxError {
     ParseFloatError,
     SyntaxError { token: Token, message: String },
     RuntimeError { token: Token, message: String },
+    ResolutionError(String),
     UndefinedVariable(String),
     InternalError(String),
     Return(Literal),
@@ -42,6 +43,7 @@ impl fmt::Display for LoxError {
                     "Runtime error on line {line} at token {lexeme}: {message}"
                 )
             }
+            Self::ResolutionError(message) => write!(f, "Resolution error: {message}"),
             Self::UndefinedVariable(name) => write!(f, "Undefined variable: {name}"),
             Self::InternalError(message) => write!(f, "Internal error: {message}"),
             Self::Return(value) => write!(f, "Meant to return: {value}"),

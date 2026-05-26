@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Expr, FunctionDeclaration, FunctionKind, Literal, Stmt},
+    ast::{Expr, ExprKind, FunctionDeclaration, FunctionKind, Literal, Stmt},
     errors::LoxError,
     operator_type::{BinaryOp, BinaryOpType, LogicalOp, LogicalOpType, UnaryOp, UnaryOpType},
     token::Token,
@@ -9,12 +9,23 @@ use crate::{
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,
+    next_expr_id: usize,
 }
 
 // TODO: this whole thing could use less memory by actually consuming each token rather than leaving the vector intact
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Parser { tokens, current: 0 }
+        Parser {
+            tokens,
+            current: 0,
+            next_expr_id: 0,
+        }
+    }
+
+    fn expr(&mut self, kind: ExprKind) -> Expr {
+        let id = self.next_expr_id;
+        self.next_expr_id += 1;
+        Expr { id, kind }
     }
 
     // TODO: maybe these should be a specific subtype of LoxError, like SyntaxError
@@ -127,7 +138,7 @@ impl Parser {
         };
         let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
         let condition = match token.token_type {
-            TokenType::Semicolon => Expr::Literal(Literal::Bool(true)),
+            TokenType::Semicolon => self.expr(ExprKind::Literal(Literal::Bool(true))),
             _ => self.expression()?,
         };
         self.consume(TokenType::Semicolon, "Expect ';' after loop condition")?;
@@ -288,11 +299,11 @@ impl Parser {
             self.advance()?;
             let equals = self.previous()?;
             let value = self.assignment()?;
-            match expr {
-                Expr::Variable { name } => Ok(Expr::Assign {
+            match expr.kind {
+                ExprKind::Variable { name } => Ok(self.expr(ExprKind::Assign {
                     name,
                     value: Box::new(value),
-                }),
+                })),
                 _ => Err(LoxError::SyntaxError {
                     token: equals,
                     message: "Invalid assignment target.".to_string(),
@@ -318,11 +329,11 @@ impl Parser {
         while let Some(operator) = self.peek().and_then(or_op) {
             self.advance()?;
             let right = Box::new(self.and()?);
-            expr = Expr::Logical {
+            expr = self.expr(ExprKind::Logical {
                 left: Box::new(expr),
                 operator,
                 right,
-            }
+            })
         }
 
         Ok(expr)
@@ -343,11 +354,11 @@ impl Parser {
         while let Some(operator) = self.peek().and_then(and_op) {
             self.advance()?;
             let right = Box::new(self.equality()?);
-            expr = Expr::Logical {
+            expr = self.expr(ExprKind::Logical {
                 left: Box::new(expr),
                 operator,
                 right,
-            }
+            })
         }
         Ok(expr)
     }
@@ -368,11 +379,11 @@ impl Parser {
         while let Some(operator) = self.peek().and_then(equality_op) {
             self.advance()?;
             let right = Box::new(self.comparison()?);
-            expr = Expr::Binary {
+            expr = self.expr(ExprKind::Binary {
                 left: Box::new(expr),
                 operator: operator,
                 right,
-            };
+            });
         }
 
         Ok(expr)
@@ -396,11 +407,11 @@ impl Parser {
         while let Some(operator) = self.peek().and_then(comparison_op) {
             self.advance()?;
             let right = self.term()?;
-            expr = Expr::Binary {
+            expr = self.expr(ExprKind::Binary {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
-            };
+            });
         }
         Ok(expr)
     }
@@ -421,11 +432,11 @@ impl Parser {
         while let Some(operator) = self.peek().and_then(term_op) {
             self.advance()?;
             let right = self.factor()?;
-            expr = Expr::Binary {
+            expr = self.expr(ExprKind::Binary {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
-            };
+            });
         }
         Ok(expr)
     }
@@ -446,11 +457,11 @@ impl Parser {
         while let Some(operator) = self.peek().and_then(factor_op) {
             self.advance()?;
             let right = self.unary()?;
-            expr = Expr::Binary {
+            expr = self.expr(ExprKind::Binary {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
-            };
+            });
         }
         Ok(expr)
     }
@@ -472,10 +483,10 @@ impl Parser {
         if let Some(operator) = self.peek().and_then(unary_op) {
             self.advance()?;
             let right = self.unary()?;
-            Ok(Expr::Unary {
+            Ok(self.expr(ExprKind::Unary {
                 operator,
                 right: Box::new(right),
-            })
+            }))
         } else {
             self.call()
         }
@@ -523,11 +534,11 @@ impl Parser {
             }
         };
         let paren = self.consume(TokenType::RightParen, "Expect ')' after arguments")?;
-        Ok(Expr::Call {
+        Ok(self.expr(ExprKind::Call {
             callee: Box::new(callee),
             paren,
             arguments,
-        })
+        }))
     }
 
     fn primary(&mut self) -> Result<Expr, LoxError> {
@@ -536,19 +547,23 @@ impl Parser {
         }
         let token = self.advance()?;
         match &token.token_type {
-            TokenType::False => Ok(Expr::Literal(Literal::Bool(false))),
-            TokenType::True => Ok(Expr::Literal(Literal::Bool(true))),
-            TokenType::Nil => Ok(Expr::Literal(Literal::Nil)),
-            TokenType::Number(value) => Ok(Expr::Literal(Literal::Number(value.clone()))),
-            TokenType::String(value) => Ok(Expr::Literal(Literal::String(value.clone()))),
+            TokenType::False => Ok(self.expr(ExprKind::Literal(Literal::Bool(false)))),
+            TokenType::True => Ok(self.expr(ExprKind::Literal(Literal::Bool(true)))),
+            TokenType::Nil => Ok(self.expr(ExprKind::Literal(Literal::Nil))),
+            TokenType::Number(value) => {
+                Ok(self.expr(ExprKind::Literal(Literal::Number(value.clone()))))
+            }
+            TokenType::String(value) => {
+                Ok(self.expr(ExprKind::Literal(Literal::String(value.clone()))))
+            }
             TokenType::LeftParen => {
                 let expr = self.expression()?;
                 self.consume(TokenType::RightParen, "Expect ')' after expression.")?;
-                Ok(Expr::Grouping {
+                Ok(self.expr(ExprKind::Grouping {
                     expression: Box::new(expr),
-                })
+                }))
             }
-            TokenType::Identifier(name) => Ok(Expr::Variable { name: name.clone() }),
+            TokenType::Identifier(name) => Ok(self.expr(ExprKind::Variable { name: name.clone() })),
             _ => Err(LoxError::SyntaxError {
                 token: token.clone(),
                 message: "Expect expression".to_string(),

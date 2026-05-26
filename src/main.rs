@@ -6,6 +6,7 @@ use std::process;
 use crate::errors::LoxError;
 use crate::interpreter::Interpreter;
 use crate::parser::Parser;
+use crate::resolver::Resolver;
 use crate::scanner::Scanner;
 
 mod ast;
@@ -16,6 +17,7 @@ mod interpreter;
 mod native_functions;
 mod operator_type;
 mod parser;
+mod resolver;
 mod scanner;
 mod token;
 mod token_type;
@@ -51,7 +53,7 @@ impl Lox {
         match result {
             Ok(()) => {}
             Err(error) => {
-                self.report_error(error);
+                println!("{}", error);
                 process::exit(65);
             }
         }
@@ -69,14 +71,9 @@ impl Lox {
             let result = self.run(line);
             match result {
                 Ok(()) => {}
-                Err(e) => self.report_error(e),
+                Err(e) => println!("{}", e),
             }
         }
-    }
-
-    fn report_error(&self, error: LoxError) {
-        // TODO: can delete this and replace
-        println!("{}", error);
     }
 
     fn run(&mut self, source: String) -> Result<(), LoxError> {
@@ -84,6 +81,8 @@ impl Lox {
         let tokens = scanner.scan_tokens()?;
         let mut parser = Parser::new(tokens);
         let statements = parser.parse()?;
+        let mut resolver = Resolver::new(&mut self.interpreter);
+        resolver.resolve_multiple_statements(&statements)?;
         self.interpreter.interpret(statements)
     }
 }

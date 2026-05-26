@@ -9,7 +9,7 @@ pub struct Environment {
 }
 
 impl Environment {
-    pub fn enclosed_by(enclosing: &Rc<RefCell<Environment>>) -> Rc<RefCell<Self>> {
+    pub fn enclosed_by(enclosing: &Rc<RefCell<Self>>) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Environment {
             values: HashMap::default(),
             enclosing: Some(Rc::clone(enclosing)),
@@ -52,5 +52,48 @@ impl Environment {
                 None => Err(LoxError::UndefinedVariable(name.into())),
             },
         }
+    }
+
+    pub fn get_at(
+        env: &Rc<RefCell<Self>>,
+        distance: usize,
+        name: &str,
+    ) -> Result<Literal, LoxError> {
+        Ok(Self::ancestor(env, distance)?
+            .borrow()
+            .values
+            .get(name)
+            .ok_or(LoxError::InternalError(format!(
+                "value matching {name} not found in environment at depth {distance}"
+            )))?
+            .clone())
+    }
+
+    pub fn assign_at(
+        env: &Rc<RefCell<Self>>,
+        distance: usize,
+        name: &str,
+        value: Literal,
+    ) -> Result<(), LoxError> {
+        Self::ancestor(env, distance)?
+            .borrow_mut()
+            .values
+            .insert(name.into(), value);
+        Ok(())
+    }
+
+    fn ancestor(env: &Rc<RefCell<Self>>, distance: usize) -> Result<Rc<RefCell<Self>>, LoxError> {
+        let mut environment = Rc::clone(env);
+        for _ in 0..distance {
+            let next = environment
+                .borrow()
+                .enclosing
+                .clone()
+                .ok_or(LoxError::InternalError(
+                    "No enclosing scope at this distance".to_string(),
+                ))?;
+            environment = next;
+        }
+        Ok(environment)
     }
 }

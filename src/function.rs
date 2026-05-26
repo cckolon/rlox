@@ -10,6 +10,8 @@ use crate::{
 #[derive(Debug)]
 pub struct LoxFunction {
     pub declaration: FunctionDeclaration,
+    // TODO: create a test for a circular reference and eliminate it with Weak<>
+    // Like, is it a problem when the environment references a function which references the environment?
     pub closure: Rc<RefCell<Environment>>,
 }
 

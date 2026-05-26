@@ -1,5 +1,8 @@
 use core::fmt;
-use std::rc::Rc;
+use std::{
+    hash::{Hash, Hasher},
+    rc::Rc,
+};
 
 use crate::{
     errors::LoxError,
@@ -66,8 +69,28 @@ pub trait Callable: fmt::Debug {
     fn name(&self) -> &str;
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Expr {
+#[derive(Debug, Clone)]
+pub struct Expr {
+    pub id: usize,
+    pub kind: ExprKind,
+}
+
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Expr {}
+
+impl Hash for Expr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ExprKind {
     Assign {
         name: String,
         value: Box<Expr>,

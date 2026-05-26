@@ -1,7 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
-    ast::{Expr, Literal, Stmt},
+    ast::{Expr, ExprKind, Literal, Stmt},
     environment::Environment,
     errors::LoxError,
     function::LoxFunction,
@@ -11,6 +11,7 @@ use crate::{
 
 pub struct Interpreter {
     pub globals: Rc<RefCell<Environment>>,
+    locals: HashMap<Expr, usize>,
     environment: Rc<RefCell<Environment>>,
 }
 
@@ -22,6 +23,7 @@ impl Interpreter {
             .define("clock", Literal::Callable(Rc::new(Clock {})));
         Interpreter {
             globals: environment.clone(),
+            locals: HashMap::new(),
             environment,
         }
     }
@@ -93,6 +95,12 @@ impl Interpreter {
         Ok(())
     }
 
+    pub fn resolve(&mut self, expression: &Expr, depth: usize) {
+        // TODO: should I be cloning here? I think maybe I could pass
+        // actual values around everywhere in the resolver.
+        self.locals.insert(expression.clone(), depth);
+    }
+
     pub fn execute_block(
         &mut self,
         statements: &Vec<Stmt>,
@@ -112,16 +120,26 @@ impl Interpreter {
     }
 
     pub fn evaluate_expression(&mut self, expr: &Expr) -> Result<Literal, LoxError> {
-        match expr {
-            Expr::Assign { name, value } => {
+        // TODO: this can probably consume
+        match &expr.kind {
+            ExprKind::Assign { name, value } => {
                 let value = self.evaluate_expression(value)?;
-                self.environment.borrow_mut().assign(name, value)?;
+                let distance = self.locals.get(expr);
+                match distance {
+                    Some(depth) => {
+                        Environment::assign_at(&self.environment, depth.clone(), name, value)?;
+                    }
+                    None => {
+                        self.globals.borrow_mut().assign(name, value)?;
+                    }
+                }
+                // TODO: looks like this should maybe be the value, check the spec
                 Ok(Literal::Nil)
             }
-            Expr::Literal(value) => Ok(value.clone()),
-            Expr::Variable { name } => Ok(self.environment.borrow().get(name)?.clone()),
-            Expr::Grouping { expression } => self.evaluate_expression(expression),
-            Expr::Unary { right, operator } => {
+            ExprKind::Literal(value) => Ok(value.clone()),
+            ExprKind::Variable { name } => Ok(self.look_up_variable(name, expr)?),
+            ExprKind::Grouping { expression } => self.evaluate_expression(expression),
+            ExprKind::Unary { right, operator } => {
                 let right_value = self.evaluate_expression(right)?;
                 match operator.op_type {
                     UnaryOpType::Negative => match right_value {
@@ -134,7 +152,7 @@ impl Interpreter {
                     UnaryOpType::Not => Ok(Literal::Bool(!is_truthy(&right_value))),
                 }
             }
-            Expr::Binary {
+            ExprKind::Binary {
                 left,
                 operator,
                 right,
@@ -228,12 +246,12 @@ impl Interpreter {
                     BinaryOpType::NotEqual => Ok(Literal::Bool(left != right)),
                 }
             }
-            Expr::Call {
+            ExprKind::Call {
                 callee,
                 paren,
                 arguments,
             } => {
-                let evaluated_callee = self.evaluate_expression(callee)?;
+                let evaluated_callee = self.evaluate_expression(&callee)?;
                 let argument_results: Result<Vec<Literal>, LoxError> = arguments
                     .iter()
                     .map(|expr| self.evaluate_expression(expr))
@@ -261,7 +279,7 @@ impl Interpreter {
                     }),
                 }
             }
-            Expr::Logical {
+            ExprKind::Logical {
                 left,
                 operator,
                 right,
@@ -276,6 +294,18 @@ impl Interpreter {
                 } else {
                     self.evaluate_expression(right)
                 }
+            }
+        }
+    }
+
+    fn look_up_variable(&self, name: &String, expr: &Expr) -> Result<Literal, LoxError> {
+        let distance = self.locals.get(expr);
+        match distance {
+            None => self.globals.borrow().get(name),
+            Some(depth) => {
+                // TODO: doesn't seem like I should need to clone here
+                let value = Environment::get_at(&self.environment, depth.clone(), name)?;
+                Ok(value)
             }
         }
     }
