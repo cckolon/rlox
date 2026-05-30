@@ -10,6 +10,7 @@ use crate::resolver::Resolver;
 use crate::scanner::Scanner;
 
 mod ast;
+mod class;
 mod environment;
 mod errors;
 mod function;
@@ -77,7 +78,7 @@ impl Lox {
     }
 
     fn run(&mut self, source: String) -> Result<(), LoxError> {
-        let mut scanner = Scanner::new(source);
+        let scanner = Scanner::new(source);
         let tokens = scanner.scan_tokens()?;
         let mut parser = Parser::new(tokens);
         let statements = parser.parse()?;

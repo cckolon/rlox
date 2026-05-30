@@ -4,12 +4,21 @@ use crate::{ast::Literal, token::Token};
 
 #[derive(Debug)]
 pub enum LoxError {
-    BadInputToken { line: usize, character: char },
-    UnterminatedString,
+    ScannerError {
+        line: usize,
+        character: char,
+        message: String,
+    },
     UnexpectedEndOfPhrase,
-    ParseFloatError,
-    SyntaxError { token: Token, message: String },
-    RuntimeError { token: Token, message: String },
+    SyntaxError {
+        token: Token,
+        message: String,
+    },
+    RuntimeError {
+        token: Token,
+        message: String,
+    },
+    // TODO: this should be a token
     ResolutionError(String),
     UndefinedVariable(String),
     InternalError(String),
@@ -19,18 +28,22 @@ pub enum LoxError {
 impl fmt::Display for LoxError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::BadInputToken { line, character } => {
-                write!(f, "Bad input token on line {line}: {character}")
-            }
-            Self::UnterminatedString => write!(f, "Unterminated string"),
-            Self::UnexpectedEndOfPhrase => write!(f, "Unexpected end of phrase"),
-            Self::ParseFloatError => write!(f, "Parse float error"),
-            Self::SyntaxError { token, message } => {
-                let line = token.line;
-                let lexeme = token.lexeme.clone();
+            Self::ScannerError {
+                line,
+                character,
+                message,
+            } => {
                 write!(
                     f,
-                    "Syntax error on line {line} at token {lexeme}: {message}"
+                    "Scanner error at line {line} on character {character}: {message}"
+                )
+            }
+            Self::UnexpectedEndOfPhrase => write!(f, "Unexpected end of phrase"),
+            Self::SyntaxError { token, message } => {
+                write!(
+                    f,
+                    "Syntax error on line {} at token {}: {}",
+                    token.line, token.lexeme, message
                 )
             }
             Self::RuntimeError { token, message } => {

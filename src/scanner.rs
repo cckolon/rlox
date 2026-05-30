@@ -19,12 +19,12 @@ impl Scanner {
         }
     }
 
-    pub fn scan_tokens(&mut self) -> Result<Vec<Token>, LoxError> {
+    pub fn scan_tokens(mut self) -> Result<Vec<Token>, LoxError> {
         while !self.is_at_end() {
             self.start = self.current;
             self.scan_token()?
         }
-        Ok(self.tokens.clone())
+        Ok(self.tokens)
     }
 
     fn scan_token(&mut self) -> Result<(), LoxError> {
@@ -108,9 +108,10 @@ impl Scanner {
                 } else if c.is_alphabetic() {
                     self.identifier()
                 } else {
-                    Err(LoxError::BadInputToken {
+                    Err(LoxError::ScannerError {
                         line: self.line,
                         character: c,
+                        message: "Bad input token".to_string(),
                     })
                 }
             }
@@ -170,7 +171,16 @@ impl Scanner {
             self.advance();
         }
         if self.is_at_end() {
-            return Err(LoxError::UnterminatedString);
+            let character = self
+                .source
+                .chars()
+                .nth(self.current - 1)
+                .expect("Can't get last char of file containing at least this token: \"");
+            return Err(LoxError::ScannerError {
+                line: self.line,
+                character,
+                message: "Unterminated string".to_string(),
+            });
         }
         self.advance();
         let value = self.substring(self.start + 1, self.current - 1);
@@ -192,14 +202,9 @@ impl Scanner {
             }
         }
         let literal_string = self.substring(self.start, self.current);
-        let parsed_literal: Result<f64, _> = literal_string.parse();
-        match parsed_literal {
-            Ok(literal_number) => {
-                self.add_token(TokenType::Number(literal_number));
-                Ok(())
-            }
-            Err(_) => Err(LoxError::ParseFloatError),
-        }
+        let parsed_literal = literal_string.parse().expect("Failed to parse float");
+        self.add_token(TokenType::Number(parsed_literal));
+        Ok(())
     }
 
     fn substring(&self, start: usize, end: usize) -> String {
@@ -227,7 +232,7 @@ impl Scanner {
         if self.current + 1 >= self.source.chars().count() {
             None
         } else {
-            self.source.chars().nth(self.current)
+            self.source.chars().nth(self.current + 1)
         }
     }
 
@@ -235,7 +240,7 @@ impl Scanner {
         loop {
             let peeked = self.peek();
             if let Some(c) = peeked
-                && c.is_alphanumeric()
+                && (c.is_alphanumeric() || c == '_')
             {
                 self.advance();
             } else {

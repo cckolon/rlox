@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, mem};
 
 use crate::{
     ast::{Expr, ExprKind, FunctionDeclaration, Stmt},
@@ -10,6 +10,7 @@ pub struct Resolver<'a> {
     interpreter: &'a mut Interpreter,
     scopes: Vec<HashMap<String, bool>>,
     current_function: FunctionType,
+    current_class: ClassType,
 }
 
 impl<'a> Resolver<'a> {
@@ -18,6 +19,7 @@ impl<'a> Resolver<'a> {
             interpreter,
             scopes: vec![],
             current_function: FunctionType::None,
+            current_class: ClassType::None,
         }
     }
 
@@ -36,6 +38,28 @@ impl<'a> Resolver<'a> {
                 self.end_scope();
                 Ok(())
             }
+            Stmt::Class { name, methods } => {
+                let enclosing_class = mem::replace(&mut self.current_class, ClassType::Class);
+                self.declare(name)?;
+                self.define(name);
+                self.begin_scope();
+                self.scopes
+                    .last_mut()
+                    .expect("Scopes were empty after beginning a new scope in class statement")
+                    .insert("this".to_string(), true);
+
+                for method in methods {
+                    let function_type = if method.name == "init" {
+                        FunctionType::Initializer
+                    } else {
+                        FunctionType::Method
+                    };
+                    self.resolve_function(method, function_type)?;
+                }
+                self.end_scope();
+                self.current_class = enclosing_class;
+                Ok(())
+            }
             Stmt::Expression(expression) => self.resolve_expression(expression),
             Stmt::If {
                 condition,
@@ -50,13 +74,18 @@ impl<'a> Resolver<'a> {
                 Ok(())
             }
             Stmt::Print(expression) => self.resolve_expression(expression),
-            Stmt::Return { keyword: _, value } => {
+            Stmt::Return { token: _, value } => {
                 if self.current_function == FunctionType::None {
                     return Err(LoxError::ResolutionError(
                         "Can't return from top level".to_string(),
                     ));
                 }
                 if let Some(expression) = value {
+                    if self.current_function == FunctionType::Initializer {
+                        return Err(LoxError::ResolutionError(
+                            "Can't return a value from an initializer".to_string(),
+                        ));
+                    }
                     self.resolve_expression(expression)?;
                 }
                 Ok(())
@@ -66,7 +95,11 @@ impl<'a> Resolver<'a> {
                 self.resolve_statement(body)?;
                 Ok(())
             }
-            Stmt::Var { name, initializer } => {
+            Stmt::Var {
+                token,
+                name,
+                initializer,
+            } => {
                 self.declare(name)?;
                 if let Some(initializer_expression) = initializer {
                     self.resolve_expression(initializer_expression)?;
@@ -94,12 +127,10 @@ impl<'a> Resolver<'a> {
                     )));
                 };
                 self.resolve_local(expression, name);
-                Ok(())
             }
             ExprKind::Assign { name, value } => {
                 self.resolve_expression(value)?;
                 self.resolve_local(expression, name);
-                Ok(())
             }
             ExprKind::Binary {
                 left,
@@ -108,7 +139,6 @@ impl<'a> Resolver<'a> {
             } => {
                 self.resolve_expression(left)?;
                 self.resolve_expression(right)?;
-                Ok(())
             }
             ExprKind::Call {
                 callee,
@@ -119,11 +149,14 @@ impl<'a> Resolver<'a> {
                 for argument in arguments {
                     self.resolve_expression(argument)?;
                 }
-                Ok(())
             }
-            ExprKind::Grouping { expression } => self.resolve_expression(expression),
-            ExprKind::Literal(_value) => Ok(()),
-            ExprKind::Unary { operator: _, right } => self.resolve_expression(right),
+            ExprKind::Grouping { expression } => {
+                self.resolve_expression(expression)?;
+            }
+            ExprKind::Literal(_value) => (),
+            ExprKind::Unary { operator: _, right } => {
+                self.resolve_expression(right)?;
+            }
             ExprKind::Logical {
                 left,
                 operator: _,
@@ -131,9 +164,28 @@ impl<'a> Resolver<'a> {
             } => {
                 self.resolve_expression(left)?;
                 self.resolve_expression(right)?;
-                Ok(())
+            }
+            ExprKind::Get { object, token: _ } => {
+                self.resolve_expression(object)?;
+            }
+            ExprKind::Set {
+                object,
+                token,
+                value,
+            } => {
+                self.resolve_expression(object)?;
+                self.resolve_expression(value)?;
+            }
+            ExprKind::This { token } => {
+                if self.current_class == ClassType::None {
+                    return Err(LoxError::ResolutionError(
+                        "Can't use 'this' outside a class.".to_string(),
+                    ));
+                }
+                self.resolve_local(expression, token.lexeme.clone());
             }
         }
+        Ok(())
     }
 
     fn resolve_function(
@@ -196,4 +248,12 @@ impl<'a> Resolver<'a> {
 enum FunctionType {
     None,
     Function,
+    Method,
+    Initializer,
+}
+
+#[derive(PartialEq)]
+enum ClassType {
+    None,
+    Class,
 }

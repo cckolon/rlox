@@ -1,11 +1,11 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, rc::Rc};
 
 use crate::{
     ast::{Expr, ExprKind, FunctionDeclaration, FunctionKind, Literal, Stmt},
     errors::LoxError,
     operator_type::{BinaryOp, BinaryOpType, LogicalOp, LogicalOpType, UnaryOp, UnaryOpType},
     token::Token,
-    token_type::TokenType,
+    token_type::TokenType::{self, Identifier},
 };
 
 pub struct Parser {
@@ -47,7 +47,13 @@ impl Parser {
             }
             TokenType::Fun => {
                 self.advance();
-                self.function(FunctionKind::Function)
+                Ok(Stmt::Function(Rc::new(
+                    self.function(FunctionKind::Function)?,
+                )))
+            }
+            TokenType::Class => {
+                self.advance();
+                self.class_declaration()
             }
             _ => self.statement(),
         };
@@ -59,18 +65,18 @@ impl Parser {
 
     fn var_declaration(&mut self) -> Result<Stmt, LoxError> {
         // TODO: rework this to combine with consume. Can prob do with generic
-        let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
-        let name = match token.token_type {
-            TokenType::Identifier(name) => name,
+        let next_token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+        let identifier_token = match &next_token.token_type {
+            TokenType::Identifier(_) => next_token,
             _ => {
                 return Err(LoxError::SyntaxError {
-                    token,
+                    token: next_token,
                     message: "Expected identifier".to_string(),
                 });
             }
         };
-        let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
-        let initializer = match token.token_type {
+        let equal_token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+        let initializer = match equal_token.token_type {
             TokenType::Equal => {
                 self.advance();
                 Some(self.expression()?)
@@ -81,7 +87,35 @@ impl Parser {
             TokenType::Semicolon,
             "Expect ';' after variable declaration",
         )?;
-        Ok(Stmt::Var { name, initializer })
+        Ok(Stmt::Var {
+            name: identifier_token.lexeme.clone(),
+            token: identifier_token,
+            initializer,
+        })
+    }
+
+    fn class_declaration(&mut self) -> Result<Stmt, LoxError> {
+        let identifier_token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+        let name = match identifier_token.token_type {
+            Identifier(name) => name,
+            _ => {
+                return Err(LoxError::SyntaxError {
+                    token: identifier_token,
+                    message: "Expect class name".to_string(),
+                });
+            }
+        };
+        self.consume(TokenType::LeftBrace, "Expect '{' before class body")?;
+        let mut methods = vec![];
+        loop {
+            let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+            if matches!(token.token_type, TokenType::RightBrace) {
+                self.advance();
+                break;
+            }
+            methods.push(self.function(FunctionKind::Method)?)
+        }
+        Ok(Stmt::Class { name, methods })
     }
 
     fn statement(&mut self) -> Result<Stmt, LoxError> {
@@ -172,7 +206,10 @@ impl Parser {
             _ => Some(self.expression()?),
         };
         self.consume(TokenType::Semicolon, "Expect ';' after return value.")?;
-        Ok(Stmt::Return { keyword, value })
+        Ok(Stmt::Return {
+            token: keyword,
+            value,
+        })
     }
 
     fn expression_statement(&mut self) -> Result<Stmt, LoxError> {
@@ -181,7 +218,7 @@ impl Parser {
         Ok(Stmt::Expression(expression))
     }
 
-    fn function(&mut self, kind: FunctionKind) -> Result<Stmt, LoxError> {
+    fn function(&mut self, kind: FunctionKind) -> Result<FunctionDeclaration, LoxError> {
         let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
         let name = match token.token_type {
             TokenType::Identifier(name) => name,
@@ -229,7 +266,7 @@ impl Parser {
             format!("Expected '{{' before {kind} body"),
         )?;
         let body = self.block()?;
-        Ok(Stmt::Function(FunctionDeclaration { name, params, body }))
+        Ok(FunctionDeclaration { name, params, body })
     }
 
     fn if_statement(&mut self) -> Result<Stmt, LoxError> {
@@ -282,11 +319,13 @@ impl Parser {
             && token.token_type == TokenType::Equal
         {
             let equals = self.advance_or_panic();
-            let value = self.assignment()?;
+            let value = Box::new(self.assignment()?);
             match expr.kind {
-                ExprKind::Variable { name } => Ok(self.expr(ExprKind::Assign {
-                    name,
-                    value: Box::new(value),
+                ExprKind::Variable { name } => Ok(self.expr(ExprKind::Assign { name, value })),
+                ExprKind::Get { object, token } => Ok(self.expr(ExprKind::Set {
+                    object,
+                    token,
+                    value,
                 })),
                 _ => Err(LoxError::SyntaxError {
                     token: equals,
@@ -452,11 +491,32 @@ impl Parser {
                 Some(token) => token,
                 None => break,
             };
-            if token.token_type != TokenType::LeftParen {
-                break;
+            match token.token_type {
+                TokenType::LeftParen => {
+                    self.advance();
+                    expr = self.finish_call(expr)?;
+                }
+                TokenType::Dot => {
+                    self.advance();
+                    let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+                    let name = match &token.token_type {
+                        TokenType::Identifier(name) => name.clone(),
+                        _ => {
+                            return Err(LoxError::SyntaxError {
+                                token,
+                                message: "Expect property name after '.'".to_string(),
+                            });
+                        }
+                    };
+                    expr = self.expr(ExprKind::Get {
+                        object: Box::new(expr),
+                        token,
+                    })
+                }
+                _ => {
+                    break;
+                }
             }
-            self.advance();
-            expr = self.finish_call(expr)?;
         }
         Ok(expr)
     }
@@ -502,6 +562,7 @@ impl Parser {
             TokenType::False => Ok(self.expr(ExprKind::Literal(Literal::Bool(false)))),
             TokenType::True => Ok(self.expr(ExprKind::Literal(Literal::Bool(true)))),
             TokenType::Nil => Ok(self.expr(ExprKind::Literal(Literal::Nil))),
+            TokenType::This => Ok(self.expr(ExprKind::This { token })),
             TokenType::Number(value) => Ok(self.expr(ExprKind::Literal(Literal::Number(value)))),
             TokenType::String(value) => Ok(self.expr(ExprKind::Literal(Literal::String(value)))),
             TokenType::LeftParen => {

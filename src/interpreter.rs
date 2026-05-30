@@ -1,11 +1,12 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use crate::{
-    ast::{Expr, ExprKind, Literal, Stmt},
+    ast::{Expr, ExprKind, Literal, LoxCallable, Stmt},
+    class::{LoxClass, LoxInstance},
     environment::Environment,
     errors::LoxError,
     function::LoxFunction,
-    native_functions::Clock,
+    native_functions::NativeFunction,
     operator_type::{BinaryOpType, LogicalOpType, UnaryOpType},
 };
 
@@ -18,9 +19,10 @@ pub struct Interpreter {
 impl Interpreter {
     pub fn new() -> Self {
         let environment = Environment::new();
-        environment
-            .borrow_mut()
-            .define("clock", Literal::Callable(Rc::new(Clock {})));
+        environment.borrow_mut().define(
+            "clock",
+            Literal::Callable(LoxCallable::NativeFunction(Rc::new(NativeFunction::Clock))),
+        );
         Interpreter {
             globals: environment.clone(),
             locals: HashMap::new(),
@@ -43,7 +45,11 @@ impl Interpreter {
             Stmt::Print(expression) => {
                 println!("{}", self.evaluate_expression(expression)?);
             }
-            Stmt::Var { name, initializer } => {
+            Stmt::Var {
+                name,
+                token: _,
+                initializer,
+            } => {
                 let value = match initializer {
                     Some(expr) => self.evaluate_expression(expr)?,
                     None => Literal::Nil,
@@ -76,20 +82,42 @@ impl Interpreter {
             Stmt::Function(function) => {
                 self.environment.borrow_mut().define(
                     function.name.clone(),
-                    Literal::Callable(Rc::new(LoxFunction {
-                        // TODO: might want to RC the function instead
+                    Literal::Callable(LoxCallable::UserFunction(Rc::new(LoxFunction {
                         declaration: function.clone(),
                         closure: self.environment.clone(),
-                    })),
+                        is_initializer: false,
+                    }))),
                 );
             }
-            Stmt::Return { keyword, value } => {
+            Stmt::Return {
+                token: keyword,
+                value,
+            } => {
                 let evaluated_value = value
                     .as_ref()
                     .map(|expression| self.evaluate_expression(expression))
                     .transpose()?
                     .unwrap_or(Literal::Nil);
                 return Err(LoxError::Return(evaluated_value));
+            }
+            Stmt::Class { name, methods } => {
+                self.environment.borrow_mut().define(name, Literal::Nil);
+                let mut methods_map = HashMap::new();
+                for method in methods {
+                    let function = LoxFunction {
+                        declaration: Rc::new(method.clone()),
+                        closure: self.environment.clone(),
+                        is_initializer: method.name == "init",
+                    };
+                    methods_map.insert(method.name.clone(), function);
+                }
+                let class = Rc::new(LoxClass {
+                    name: name.clone(),
+                    methods: methods_map,
+                });
+                self.environment
+                    .borrow_mut()
+                    .assign(name, Literal::Callable(LoxCallable::Class(class)))?;
             }
         };
         Ok(())
@@ -295,6 +323,37 @@ impl Interpreter {
                     self.evaluate_expression(right)
                 }
             }
+            ExprKind::Get { object, token } => {
+                let evaluated_object = self.evaluate_expression(object)?;
+                match evaluated_object {
+                    Literal::ClassInstance(instance) => LoxInstance::get(&instance, &token),
+                    _ => Err(LoxError::SyntaxError {
+                        token: token.clone(),
+                        message: "Only instances have properties".to_string(),
+                    }),
+                }
+            }
+            ExprKind::Set {
+                object,
+                token,
+                value,
+            } => {
+                let evaluated_object = self.evaluate_expression(object)?;
+                let instance = match evaluated_object {
+                    Literal::ClassInstance(instance) => instance,
+                    _ => {
+                        return Err(LoxError::RuntimeError {
+                            token: token.clone(),
+                            message: "Only instances have fields".to_string(),
+                        });
+                    }
+                };
+                let evaluated_value = self.evaluate_expression(value)?;
+                instance.borrow_mut().set(token.clone(), evaluated_value);
+                // TODO: maybe should return the value here, check the spec;
+                Ok(Literal::Nil)
+            }
+            ExprKind::This { token } => return self.look_up_variable(&token.lexeme, expr),
         }
     }
 
@@ -303,8 +362,7 @@ impl Interpreter {
         match distance {
             None => self.globals.borrow().get(name),
             Some(depth) => {
-                // TODO: doesn't seem like I should need to clone here
-                let value = Environment::get_at(&self.environment, depth.clone(), name)?;
+                let value = Environment::get_at(&self.environment, *depth, name)?;
                 Ok(value)
             }
         }

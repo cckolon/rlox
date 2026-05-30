@@ -1,12 +1,16 @@
 use core::fmt;
 use std::{
+    cell::RefCell,
     hash::{Hash, Hasher},
     rc::Rc,
 };
 
 use crate::{
+    class::{LoxClass, LoxInstance},
     errors::LoxError,
+    function::LoxFunction,
     interpreter::Interpreter,
+    native_functions::NativeFunction,
     operator_type::{BinaryOp, LogicalOp, UnaryOp},
     token::Token,
 };
@@ -16,10 +20,60 @@ pub enum Literal {
     Number(f64),
     String(String),
     Bool(bool),
-    // TODO: should this be a reference counter?
-    // Maybe just an enum of all the different types of callable?
-    Callable(Rc<dyn Callable>),
+    // TODO: should I split out here?
+    Callable(LoxCallable),
+    ClassInstance(Rc<RefCell<LoxInstance>>),
     Nil,
+}
+
+#[derive(Clone, Debug)]
+pub enum LoxCallable {
+    NativeFunction(Rc<NativeFunction>),
+    UserFunction(Rc<LoxFunction>),
+    Class(Rc<LoxClass>),
+}
+
+impl LoxCallable {
+    pub fn arity(&self) -> usize {
+        match self {
+            LoxCallable::NativeFunction(function) => function.arity(),
+            LoxCallable::UserFunction(function) => function.arity(),
+            LoxCallable::Class(class) => class.arity(),
+        }
+    }
+
+    pub fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        arguments: Vec<Literal>,
+    ) -> Result<Literal, LoxError> {
+        match self {
+            LoxCallable::Class(class) => LoxClass::call(class, interpreter, arguments),
+            LoxCallable::UserFunction(function) => function.call(interpreter, arguments),
+            LoxCallable::NativeFunction(function) => function.call(interpreter, arguments),
+        }
+    }
+}
+
+impl fmt::Display for LoxCallable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LoxCallable::UserFunction(function) => write!(f, "{}", function),
+            LoxCallable::Class(class) => write!(f, "{}", class),
+            LoxCallable::NativeFunction(function) => write!(f, "{}", function),
+        }
+    }
+}
+
+impl PartialEq for LoxCallable {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (LoxCallable::UserFunction(a), LoxCallable::UserFunction(b)) => Rc::ptr_eq(a, b),
+            (LoxCallable::Class(a), LoxCallable::Class(b)) => Rc::ptr_eq(a, b),
+            (LoxCallable::NativeFunction(a), LoxCallable::NativeFunction(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
 }
 
 impl PartialEq for Literal {
@@ -29,7 +83,8 @@ impl PartialEq for Literal {
             (Literal::String(a), Literal::String(b)) => a == b,
             (Literal::Bool(a), Literal::Bool(b)) => a == b,
             (Literal::Nil, Literal::Nil) => true,
-            (Literal::Callable(a), Literal::Callable(b)) => Rc::ptr_eq(a, b),
+            (Literal::Callable(a), Literal::Callable(b)) => a == b,
+            (Literal::ClassInstance(a), Literal::ClassInstance(b)) => Rc::ptr_eq(a, b),
             _ => false,
         }
     }
@@ -51,22 +106,13 @@ impl fmt::Display for Literal {
                 write!(f, "nil")
             }
             Self::Callable(callable) => {
-                write!(f, "{}", callable.name())
+                write!(f, "{}", callable)
+            }
+            Self::ClassInstance(instance) => {
+                write!(f, "{}", instance.borrow())
             }
         }
     }
-}
-
-pub trait Callable: fmt::Debug {
-    fn call(
-        &self,
-        interpreter: &mut Interpreter,
-        arguments: Vec<Literal>,
-    ) -> Result<Literal, LoxError>;
-
-    fn arity(&self) -> usize;
-
-    fn name(&self) -> &str;
 }
 
 #[derive(Debug, Clone)]
@@ -121,6 +167,18 @@ pub enum ExprKind {
         paren: Token,
         arguments: Vec<Expr>,
     },
+    Get {
+        object: Box<Expr>,
+        token: Token,
+    },
+    Set {
+        object: Box<Expr>,
+        token: Token,
+        value: Box<Expr>,
+    },
+    This {
+        token: Token,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +190,7 @@ pub enum Stmt {
         body: Box<Stmt>,
     },
     Var {
+        token: Token,
         name: String,
         initializer: Option<Expr>,
     },
@@ -141,10 +200,14 @@ pub enum Stmt {
         then_branch: Box<Stmt>,
         else_branch: Option<Box<Stmt>>,
     },
-    Function(FunctionDeclaration),
+    Function(Rc<FunctionDeclaration>),
     Return {
-        keyword: Token,
+        token: Token,
         value: Option<Expr>,
+    },
+    Class {
+        name: String,
+        methods: Vec<FunctionDeclaration>,
     },
 }
 
