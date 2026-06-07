@@ -179,6 +179,11 @@ pub enum ExprKind {
     This {
         token: Token,
     },
+    Super {
+        keyword: Token,
+        method: Token,
+        method_name: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -208,6 +213,7 @@ pub enum Stmt {
     Class {
         name: String,
         methods: Vec<FunctionDeclaration>,
+        superclass: Option<Expr>,
     },
 }
 

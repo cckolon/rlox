@@ -13,6 +13,7 @@ use crate::{
 pub struct LoxClass {
     pub name: String,
     pub methods: HashMap<String, LoxFunction>,
+    pub superclass: Option<Rc<LoxClass>>,
 }
 
 impl LoxClass {
@@ -25,7 +26,14 @@ impl LoxClass {
     }
 
     pub fn find_method(&self, name: &str) -> Option<&LoxFunction> {
-        self.methods.get(name)
+        let own_method = self.methods.get(name);
+        if let Some(method) = own_method {
+            return Some(method);
+        }
+        if let Some(parent) = &self.superclass {
+            return parent.find_method(name);
+        }
+        return None;
     }
 
     pub fn call(
@@ -51,7 +59,7 @@ impl fmt::Display for LoxClass {
 
 #[derive(Debug, Clone)]
 pub struct LoxInstance {
-    class: Rc<LoxClass>,
+    pub class: Rc<LoxClass>,
     fields: HashMap<String, Literal>,
 }
 

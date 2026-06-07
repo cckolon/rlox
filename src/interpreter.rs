@@ -100,8 +100,32 @@ impl Interpreter {
                     .unwrap_or(Literal::Nil);
                 return Err(LoxError::Return(evaluated_value));
             }
-            Stmt::Class { name, methods } => {
+            Stmt::Class {
+                name,
+                methods,
+                superclass,
+            } => {
                 self.environment.borrow_mut().define(name, Literal::Nil);
+                let evaluated_superclass = if let Some(class) = superclass {
+                    let evaluation_result = self.evaluate_expression(class)?;
+                    let evaluated_superclass = match &evaluation_result {
+                        Literal::Callable(LoxCallable::Class(class)) => Some(class.clone()),
+                        // TODO: get the token and change this to RuntimeError
+                        _ => {
+                            return Err(LoxError::ResolutionError(
+                                "Superclass must be a class".to_string(),
+                            ));
+                        }
+                    };
+                    self.environment = Environment::enclosed_by(&self.environment);
+                    self.environment
+                        .borrow_mut()
+                        .define("super", evaluation_result);
+
+                    evaluated_superclass
+                } else {
+                    None
+                };
                 let mut methods_map = HashMap::new();
                 for method in methods {
                     let function = LoxFunction {
@@ -114,7 +138,17 @@ impl Interpreter {
                 let class = Rc::new(LoxClass {
                     name: name.clone(),
                     methods: methods_map,
+                    superclass: evaluated_superclass,
                 });
+                if superclass.is_some() {
+                    let enclosing_environment = self
+                        .environment
+                        .borrow()
+                        .enclosing
+                        .clone()
+                        .expect("Superclass must have an enclosing environment");
+                    self.environment = enclosing_environment;
+                }
                 self.environment
                     .borrow_mut()
                     .assign(name, Literal::Callable(LoxCallable::Class(class)))?;
@@ -350,10 +384,53 @@ impl Interpreter {
                 };
                 let evaluated_value = self.evaluate_expression(value)?;
                 instance.borrow_mut().set(token.clone(), evaluated_value);
-                // TODO: maybe should return the value here, check the spec;
+                // TODO: maybe should return the value here, check the spec
                 Ok(Literal::Nil)
             }
             ExprKind::This { token } => return self.look_up_variable(&token.lexeme, expr),
+            ExprKind::Super {
+                keyword,
+                method,
+                method_name,
+            } => {
+                // TODO: maybe this shouldn't panic?
+                let distance = *self
+                    .locals
+                    .get(expr)
+                    .expect("Unable to get super expression");
+                let superclass_value = Environment::get_at(&self.environment, distance, "super")?;
+                let object = Environment::get_at(&self.environment, distance - 1, "this")?;
+                let superclass = match superclass_value {
+                    Literal::Callable(LoxCallable::Class(class)) => class,
+                    _ => {
+                        return Err(LoxError::RuntimeError {
+                            token: keyword.clone(),
+                            message: "'super' is not a class".to_string(),
+                        });
+                    }
+                };
+                let method =
+                    superclass
+                        .find_method(&method_name)
+                        .ok_or(LoxError::RuntimeError {
+                            token: method.clone(),
+                            message: format!("Undefined property: {}", method_name),
+                        })?;
+                let object_instance = match &object {
+                    Literal::ClassInstance(instance) => instance,
+                    _ => {
+                        return Err(LoxError::RuntimeError {
+                            token: keyword.clone(),
+                            message: "'super' is not a class".to_string(),
+                        });
+                    }
+                };
+                // TODO: move these wrappers to method.bind innards
+                Ok(Literal::Callable(LoxCallable::UserFunction(
+                    // TODO: should is_initializer be name==init rather than false here?
+                    method.bind(object_instance, false).clone(),
+                )))
+            }
         }
     }
 

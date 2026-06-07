@@ -5,7 +5,7 @@ use crate::{ast::Literal, errors::LoxError};
 #[derive(Debug)]
 pub struct Environment {
     values: HashMap<String, Literal>,
-    enclosing: Option<Rc<RefCell<Environment>>>,
+    pub enclosing: Option<Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
@@ -39,6 +39,7 @@ impl Environment {
                     environment.borrow_mut().assign(namestring, value)?;
                     Ok(())
                 }
+
                 None => Err(LoxError::UndefinedVariable(namestring)),
             }
         }

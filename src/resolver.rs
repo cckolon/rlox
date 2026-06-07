@@ -38,10 +38,39 @@ impl<'a> Resolver<'a> {
                 self.end_scope();
                 Ok(())
             }
-            Stmt::Class { name, methods } => {
+            Stmt::Class {
+                name,
+                methods,
+                superclass,
+            } => {
                 let enclosing_class = mem::replace(&mut self.current_class, ClassType::Class);
                 self.declare(name)?;
                 self.define(name);
+                if let Some(expr) = superclass {
+                    match &expr.kind {
+                        ExprKind::Variable {
+                            name: superclass_name,
+                        } => {
+                            if name == superclass_name {
+                                return Err(LoxError::ResolutionError(format!(
+                                    "{name} cannot be a subclass of itself"
+                                )));
+                            }
+                        }
+                        _ => {
+                            panic!(
+                                "Caught during resolution: {name} superclass is not an identifier, this should have been caught in the parser"
+                            )
+                        }
+                    }
+                    self.current_class = ClassType::Subclass;
+                    self.resolve_expression(expr)?;
+                    self.begin_scope();
+                    self.scopes
+                        .last_mut()
+                        .expect("began scope but scope not found in self.scopes")
+                        .insert("super".to_string(), true);
+                }
                 self.begin_scope();
                 self.scopes
                     .last_mut()
@@ -57,6 +86,9 @@ impl<'a> Resolver<'a> {
                     self.resolve_function(method, function_type)?;
                 }
                 self.end_scope();
+                if superclass.is_some() {
+                    self.end_scope();
+                }
                 self.current_class = enclosing_class;
                 Ok(())
             }
@@ -184,6 +216,23 @@ impl<'a> Resolver<'a> {
                 }
                 self.resolve_local(expression, token.lexeme.clone());
             }
+            ExprKind::Super {
+                keyword,
+                method: _,
+                method_name: _,
+            } => match self.current_class {
+                ClassType::None => {
+                    return Err(LoxError::ResolutionError(
+                        "Cannot use 'super' outside a class".to_string(),
+                    ));
+                }
+                ClassType::Class => {
+                    return Err(LoxError::ResolutionError(
+                        "Cannot use 'super' in a class that is not a subclass".to_string(),
+                    ));
+                }
+                ClassType::Subclass => self.resolve_local(expression, &keyword.lexeme),
+            },
         }
         Ok(())
     }
@@ -256,4 +305,5 @@ enum FunctionType {
 enum ClassType {
     None,
     Class,
+    Subclass,
 }

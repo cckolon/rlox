@@ -105,6 +105,23 @@ impl Parser {
                 });
             }
         };
+        let superclass = if let Some(token) = self.peek()
+            && token.token_type == TokenType::Less
+        {
+            self.advance_or_panic();
+            let identifier_token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+            match identifier_token.token_type {
+                TokenType::Identifier(name) => Some(self.expr(ExprKind::Variable { name })),
+                _ => {
+                    return Err(LoxError::SyntaxError {
+                        token: identifier_token,
+                        message: "Expect superclass name".to_string(),
+                    });
+                }
+            }
+        } else {
+            None
+        };
         self.consume(TokenType::LeftBrace, "Expect '{' before class body")?;
         let mut methods = vec![];
         loop {
@@ -115,7 +132,11 @@ impl Parser {
             }
             methods.push(self.function(FunctionKind::Method)?)
         }
-        Ok(Stmt::Class { name, methods })
+        Ok(Stmt::Class {
+            name,
+            methods,
+            superclass,
+        })
     }
 
     fn statement(&mut self) -> Result<Stmt, LoxError> {
@@ -563,6 +584,30 @@ impl Parser {
             TokenType::True => Ok(self.expr(ExprKind::Literal(Literal::Bool(true)))),
             TokenType::Nil => Ok(self.expr(ExprKind::Literal(Literal::Nil))),
             TokenType::This => Ok(self.expr(ExprKind::This { token })),
+            TokenType::Super => {
+                let dot = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+                if dot.token_type != TokenType::Dot {
+                    return Err(LoxError::SyntaxError {
+                        token: dot,
+                        message: "Expect '.' after 'super'".to_string(),
+                    });
+                }
+                let method = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+                let method_name = match &method.token_type {
+                    TokenType::Identifier(name) => name.clone(),
+                    _ => {
+                        return Err(LoxError::SyntaxError {
+                            token: method,
+                            message: "Expect method name.".to_string(),
+                        });
+                    }
+                };
+                Ok(self.expr(ExprKind::Super {
+                    keyword: token,
+                    method,
+                    method_name,
+                }))
+            }
             TokenType::Number(value) => Ok(self.expr(ExprKind::Literal(Literal::Number(value)))),
             TokenType::String(value) => Ok(self.expr(ExprKind::Literal(Literal::String(value)))),
             TokenType::LeftParen => {
