@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
-use crate::{ast::Literal, errors::LoxError};
+use crate::{ast::Literal, errors::LoxError, token::Token};
 
 #[derive(Debug)]
 pub struct Environment {
@@ -28,7 +28,12 @@ impl Environment {
         self.values.insert(namestring, value);
     }
 
-    pub fn assign(&mut self, name: impl Into<String>, value: Literal) -> Result<(), LoxError> {
+    pub fn assign(
+        &mut self,
+        name: impl Into<String>,
+        value: Literal,
+        token: &Token,
+    ) -> Result<(), LoxError> {
         let namestring = name.into();
         if self.values.contains_key(&namestring) {
             self.values.insert(namestring, value);
@@ -36,21 +41,27 @@ impl Environment {
         } else {
             match &self.enclosing {
                 Some(environment) => {
-                    environment.borrow_mut().assign(namestring, value)?;
+                    environment.borrow_mut().assign(namestring, value, token)?;
                     Ok(())
                 }
 
-                None => Err(LoxError::UndefinedVariable(namestring)),
+                None => Err(LoxError::RuntimeError {
+                    token: token.clone(),
+                    message: format!("Undefined variable: {}", namestring),
+                }),
             }
         }
     }
 
-    pub fn get(&self, name: &str) -> Result<Literal, LoxError> {
+    pub fn get(&self, name: &str, token: &Token) -> Result<Literal, LoxError> {
         match self.values.get(name) {
             Some(value) => Ok(value.clone()),
             None => match &self.enclosing {
-                Some(environment) => environment.borrow().get(name),
-                None => Err(LoxError::UndefinedVariable(name.into())),
+                Some(environment) => environment.borrow().get(name, token),
+                None => Err(LoxError::RuntimeError {
+                    token: token.clone(),
+                    message: format!("Undefined variable: {}", name),
+                }),
             },
         }
     }

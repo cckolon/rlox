@@ -4,6 +4,7 @@ use crate::{
     ast::{Expr, ExprKind, FunctionDeclaration, Stmt},
     errors::LoxError,
     interpreter::Interpreter,
+    token::Token,
 };
 
 pub struct Resolver<'a> {
@@ -40,21 +41,24 @@ impl<'a> Resolver<'a> {
             }
             Stmt::Class {
                 name,
+                token,
                 methods,
                 superclass,
             } => {
                 let enclosing_class = mem::replace(&mut self.current_class, ClassType::Class);
-                self.declare(name)?;
+                self.declare(name, token)?;
                 self.define(name);
                 if let Some(expr) = superclass {
                     match &expr.kind {
                         ExprKind::Variable {
+                            token: _,
                             name: superclass_name,
                         } => {
                             if name == superclass_name {
-                                return Err(LoxError::ResolutionError(format!(
-                                    "{name} cannot be a subclass of itself"
-                                )));
+                                return Err(LoxError::ResolutionError {
+                                    token: token.clone(),
+                                    message: format!("{name} cannot be a subclass of itself"),
+                                });
                             }
                         }
                         _ => {
@@ -106,17 +110,19 @@ impl<'a> Resolver<'a> {
                 Ok(())
             }
             Stmt::Print(expression) => self.resolve_expression(expression),
-            Stmt::Return { token: _, value } => {
+            Stmt::Return { token, value } => {
                 if self.current_function == FunctionType::None {
-                    return Err(LoxError::ResolutionError(
-                        "Can't return from top level".to_string(),
-                    ));
+                    return Err(LoxError::ResolutionError {
+                        token: token.clone(),
+                        message: "Can't return from top level".to_string(),
+                    });
                 }
                 if let Some(expression) = value {
                     if self.current_function == FunctionType::Initializer {
-                        return Err(LoxError::ResolutionError(
-                            "Can't return a value from an initializer".to_string(),
-                        ));
+                        return Err(LoxError::ResolutionError {
+                            token: token.clone(),
+                            message: "Can't return a value from an initializer".to_string(),
+                        });
                     }
                     self.resolve_expression(expression)?;
                 }
@@ -132,15 +138,15 @@ impl<'a> Resolver<'a> {
                 name,
                 initializer,
             } => {
-                self.declare(name)?;
+                self.declare(name, token)?;
                 if let Some(initializer_expression) = initializer {
                     self.resolve_expression(initializer_expression)?;
                 }
                 self.define(name);
                 Ok(())
             }
-            Stmt::Function(declaration) => {
-                self.declare(&declaration.name)?;
+            Stmt::Function { declaration } => {
+                self.declare(&declaration.name, &declaration.token)?;
                 self.define(&declaration.name);
                 self.resolve_function(declaration, FunctionType::Function)?;
                 Ok(())
@@ -150,17 +156,24 @@ impl<'a> Resolver<'a> {
 
     fn resolve_expression(&mut self, expression: &Expr) -> Result<(), LoxError> {
         match &expression.kind {
-            ExprKind::Variable { name } => {
+            ExprKind::Variable { token, name } => {
                 if let Some(scope) = self.scopes.last()
                     && scope.get(name) == Some(&false)
                 {
-                    return Err(LoxError::ResolutionError(format!(
-                        "Can't read local variable {name} in its own initializer."
-                    )));
+                    return Err(LoxError::ResolutionError {
+                        token: token.clone(),
+                        message: format!(
+                            "Can't read local variable {name} in its own initializer."
+                        ),
+                    });
                 };
                 self.resolve_local(expression, name);
             }
-            ExprKind::Assign { name, value } => {
+            ExprKind::Assign {
+                name,
+                token: _,
+                value,
+            } => {
                 self.resolve_expression(value)?;
                 self.resolve_local(expression, name);
             }
@@ -202,7 +215,7 @@ impl<'a> Resolver<'a> {
             }
             ExprKind::Set {
                 object,
-                token,
+                token: _,
                 value,
             } => {
                 self.resolve_expression(object)?;
@@ -210,9 +223,10 @@ impl<'a> Resolver<'a> {
             }
             ExprKind::This { token } => {
                 if self.current_class == ClassType::None {
-                    return Err(LoxError::ResolutionError(
-                        "Can't use 'this' outside a class.".to_string(),
-                    ));
+                    return Err(LoxError::ResolutionError {
+                        token: token.clone(),
+                        message: "Can't use 'this' outside a class.".to_string(),
+                    });
                 }
                 self.resolve_local(expression, token.lexeme.clone());
             }
@@ -222,14 +236,16 @@ impl<'a> Resolver<'a> {
                 method_name: _,
             } => match self.current_class {
                 ClassType::None => {
-                    return Err(LoxError::ResolutionError(
-                        "Cannot use 'super' outside a class".to_string(),
-                    ));
+                    return Err(LoxError::ResolutionError {
+                        token: keyword.clone(),
+                        message: "Cannot use 'super' outside a class".to_string(),
+                    });
                 }
                 ClassType::Class => {
-                    return Err(LoxError::ResolutionError(
-                        "Cannot use 'super' in a class that is not a subclass".to_string(),
-                    ));
+                    return Err(LoxError::ResolutionError {
+                        token: keyword.clone(),
+                        message: "Cannot use 'super' in a class that is not a subclass".to_string(),
+                    });
                 }
                 ClassType::Subclass => self.resolve_local(expression, &keyword.lexeme),
             },
@@ -245,7 +261,7 @@ impl<'a> Resolver<'a> {
         let enclosing_function = std::mem::replace(&mut self.current_function, function_type);
         self.begin_scope();
         for param in function.params.iter() {
-            self.declare(param)?;
+            self.declare(param, &function.token)?;
             self.define(param);
         }
         self.resolve_multiple_statements(&function.body)?;
@@ -262,13 +278,14 @@ impl<'a> Resolver<'a> {
         self.scopes.pop().expect("No scopes left to pop");
     }
 
-    fn declare(&mut self, name: impl Into<String>) -> Result<(), LoxError> {
+    fn declare(&mut self, name: impl Into<String>, token: &Token) -> Result<(), LoxError> {
         if let Some(scope) = self.scopes.last_mut() {
             let namestring = name.into();
             if scope.contains_key(&namestring) {
-                return Err(LoxError::ResolutionError(format!(
-                    "Already a variable with name {namestring} in this scope"
-                )));
+                return Err(LoxError::ResolutionError {
+                    token: token.clone(),
+                    message: format!("Already a variable with name {namestring} in this scope"),
+                });
             }
             scope.insert(namestring, false);
         }

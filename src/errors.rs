@@ -18,9 +18,10 @@ pub enum LoxError {
         token: Token,
         message: String,
     },
-    // TODO: this should be a token
-    ResolutionError(String),
-    UndefinedVariable(String),
+    ResolutionError {
+        token: Token,
+        message: String,
+    },
     InternalError(String),
     Return(Literal),
 }
@@ -47,17 +48,21 @@ impl fmt::Display for LoxError {
                 )
             }
             Self::RuntimeError { token, message } => {
-                let line = token.line;
-                let lexeme = token.lexeme.clone();
                 write!(
                     f,
-                    "Runtime error on line {line} at token {lexeme}: {message}"
+                    "Runtime error on line {} at token {}: {}",
+                    token.line, token.lexeme, message
                 )
             }
-            Self::ResolutionError(message) => write!(f, "Resolution error: {message}"),
-            Self::UndefinedVariable(name) => write!(f, "Undefined variable: {name}"),
+            Self::ResolutionError { token, message } => {
+                write!(
+                    f,
+                    "Resolution error on line {} at token {}: {}",
+                    token.line, token.lexeme, message
+                )
+            }
             Self::InternalError(message) => write!(f, "Internal error: {message}"),
-            Self::Return(value) => write!(f, "Meant to return: {value}"),
+            Self::Return(value) => panic!("Uncaught return error. Meant to return {value}."),
         }
     }
 }

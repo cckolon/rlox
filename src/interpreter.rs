@@ -8,6 +8,7 @@ use crate::{
     function::LoxFunction,
     native_functions::NativeFunction,
     operator_type::{BinaryOpType, LogicalOpType, UnaryOpType},
+    token::Token,
 };
 
 pub struct Interpreter {
@@ -79,20 +80,17 @@ impl Interpreter {
                 };
                 self.execute_statement(body)?;
             },
-            Stmt::Function(function) => {
+            Stmt::Function { declaration } => {
                 self.environment.borrow_mut().define(
-                    function.name.clone(),
+                    declaration.name.clone(),
                     Literal::Callable(LoxCallable::UserFunction(Rc::new(LoxFunction {
-                        declaration: function.clone(),
+                        declaration: declaration.clone(),
                         closure: self.environment.clone(),
                         is_initializer: false,
                     }))),
                 );
             }
-            Stmt::Return {
-                token: keyword,
-                value,
-            } => {
+            Stmt::Return { token: _, value } => {
                 let evaluated_value = value
                     .as_ref()
                     .map(|expression| self.evaluate_expression(expression))
@@ -101,6 +99,7 @@ impl Interpreter {
                 return Err(LoxError::Return(evaluated_value));
             }
             Stmt::Class {
+                token,
                 name,
                 methods,
                 superclass,
@@ -110,11 +109,11 @@ impl Interpreter {
                     let evaluation_result = self.evaluate_expression(class)?;
                     let evaluated_superclass = match &evaluation_result {
                         Literal::Callable(LoxCallable::Class(class)) => Some(class.clone()),
-                        // TODO: get the token and change this to RuntimeError
                         _ => {
-                            return Err(LoxError::ResolutionError(
-                                "Superclass must be a class".to_string(),
-                            ));
+                            return Err(LoxError::RuntimeError {
+                                token: token.clone(),
+                                message: "Superclass must be a class".to_string(),
+                            });
                         }
                     };
                     self.environment = Environment::enclosed_by(&self.environment);
@@ -149,9 +148,11 @@ impl Interpreter {
                         .expect("Superclass must have an enclosing environment");
                     self.environment = enclosing_environment;
                 }
-                self.environment
-                    .borrow_mut()
-                    .assign(name, Literal::Callable(LoxCallable::Class(class)))?;
+                self.environment.borrow_mut().assign(
+                    name,
+                    Literal::Callable(LoxCallable::Class(class)),
+                    token,
+                )?;
             }
         };
         Ok(())
@@ -184,7 +185,7 @@ impl Interpreter {
     pub fn evaluate_expression(&mut self, expr: &Expr) -> Result<Literal, LoxError> {
         // TODO: this can probably consume
         match &expr.kind {
-            ExprKind::Assign { name, value } => {
+            ExprKind::Assign { name, token, value } => {
                 let value = self.evaluate_expression(value)?;
                 let distance = self.locals.get(expr);
                 match distance {
@@ -192,14 +193,14 @@ impl Interpreter {
                         Environment::assign_at(&self.environment, depth.clone(), name, value)?;
                     }
                     None => {
-                        self.globals.borrow_mut().assign(name, value)?;
+                        self.globals.borrow_mut().assign(name, value, token)?;
                     }
                 }
                 // TODO: looks like this should maybe be the value, check the spec
                 Ok(Literal::Nil)
             }
             ExprKind::Literal(value) => Ok(value.clone()),
-            ExprKind::Variable { name } => Ok(self.look_up_variable(name, expr)?),
+            ExprKind::Variable { name, token } => Ok(self.look_up_variable(name, token, expr)?),
             ExprKind::Grouping { expression } => self.evaluate_expression(expression),
             ExprKind::Unary { right, operator } => {
                 let right_value = self.evaluate_expression(right)?;
@@ -387,7 +388,7 @@ impl Interpreter {
                 // TODO: maybe should return the value here, check the spec
                 Ok(Literal::Nil)
             }
-            ExprKind::This { token } => return self.look_up_variable(&token.lexeme, expr),
+            ExprKind::This { token } => return self.look_up_variable(&token.lexeme, token, expr),
             ExprKind::Super {
                 keyword,
                 method,
@@ -434,10 +435,15 @@ impl Interpreter {
         }
     }
 
-    fn look_up_variable(&self, name: &String, expr: &Expr) -> Result<Literal, LoxError> {
+    fn look_up_variable(
+        &self,
+        name: &String,
+        token: &Token,
+        expr: &Expr,
+    ) -> Result<Literal, LoxError> {
         let distance = self.locals.get(expr);
         match distance {
-            None => self.globals.borrow().get(name),
+            None => self.globals.borrow().get(name, token),
             Some(depth) => {
                 let value = Environment::get_at(&self.environment, *depth, name)?;
                 Ok(value)

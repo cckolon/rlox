@@ -42,17 +42,17 @@ impl Parser {
         let token = self.peek().ok_or(LoxError::UnexpectedEndOfPhrase)?;
         let result = match token.token_type {
             TokenType::Var => {
-                self.advance();
+                self.advance_or_panic();
                 self.var_declaration()
             }
             TokenType::Fun => {
-                self.advance();
-                Ok(Stmt::Function(Rc::new(
-                    self.function(FunctionKind::Function)?,
-                )))
+                self.advance_or_panic();
+                Ok(Stmt::Function {
+                    declaration: Rc::new(self.function(FunctionKind::Function)?),
+                })
             }
             TokenType::Class => {
-                self.advance();
+                self.advance_or_panic();
                 self.class_declaration()
             }
             _ => self.statement(),
@@ -95,12 +95,12 @@ impl Parser {
     }
 
     fn class_declaration(&mut self) -> Result<Stmt, LoxError> {
-        let identifier_token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
-        let name = match identifier_token.token_type {
-            Identifier(name) => name,
+        let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+        let name = match &token.token_type {
+            Identifier(name) => name.clone(),
             _ => {
                 return Err(LoxError::SyntaxError {
-                    token: identifier_token,
+                    token,
                     message: "Expect class name".to_string(),
                 });
             }
@@ -109,12 +109,15 @@ impl Parser {
             && token.token_type == TokenType::Less
         {
             self.advance_or_panic();
-            let identifier_token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
-            match identifier_token.token_type {
-                TokenType::Identifier(name) => Some(self.expr(ExprKind::Variable { name })),
+            let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
+            match &token.token_type {
+                TokenType::Identifier(name) => Some(self.expr(ExprKind::Variable {
+                    name: name.clone(),
+                    token,
+                })),
                 _ => {
                     return Err(LoxError::SyntaxError {
-                        token: identifier_token,
+                        token,
                         message: "Expect superclass name".to_string(),
                     });
                 }
@@ -133,6 +136,7 @@ impl Parser {
             methods.push(self.function(FunctionKind::Method)?)
         }
         Ok(Stmt::Class {
+            token,
             name,
             methods,
             superclass,
@@ -241,8 +245,8 @@ impl Parser {
 
     fn function(&mut self, kind: FunctionKind) -> Result<FunctionDeclaration, LoxError> {
         let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
-        let name = match token.token_type {
-            TokenType::Identifier(name) => name,
+        let name = match &token.token_type {
+            TokenType::Identifier(name) => name.clone(),
             _ => {
                 return Err(LoxError::SyntaxError {
                     token,
@@ -287,7 +291,12 @@ impl Parser {
             format!("Expected '{{' before {kind} body"),
         )?;
         let body = self.block()?;
-        Ok(FunctionDeclaration { name, params, body })
+        Ok(FunctionDeclaration {
+            token,
+            name,
+            params,
+            body,
+        })
     }
 
     fn if_statement(&mut self) -> Result<Stmt, LoxError> {
@@ -342,7 +351,9 @@ impl Parser {
             let equals = self.advance_or_panic();
             let value = Box::new(self.assignment()?);
             match expr.kind {
-                ExprKind::Variable { name } => Ok(self.expr(ExprKind::Assign { name, value })),
+                ExprKind::Variable { token, name } => {
+                    Ok(self.expr(ExprKind::Assign { name, token, value }))
+                }
                 ExprKind::Get { object, token } => Ok(self.expr(ExprKind::Set {
                     object,
                     token,
@@ -520,8 +531,8 @@ impl Parser {
                 TokenType::Dot => {
                     self.advance();
                     let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
-                    let name = match &token.token_type {
-                        TokenType::Identifier(name) => name.clone(),
+                    match &token.token_type {
+                        TokenType::Identifier(_) => {}
                         _ => {
                             return Err(LoxError::SyntaxError {
                                 token,
@@ -579,7 +590,7 @@ impl Parser {
             return Err(LoxError::UnexpectedEndOfPhrase);
         }
         let token = self.advance().ok_or(LoxError::UnexpectedEndOfPhrase)?;
-        match token.token_type {
+        match &token.token_type {
             TokenType::False => Ok(self.expr(ExprKind::Literal(Literal::Bool(false)))),
             TokenType::True => Ok(self.expr(ExprKind::Literal(Literal::Bool(true)))),
             TokenType::Nil => Ok(self.expr(ExprKind::Literal(Literal::Nil))),
@@ -608,8 +619,10 @@ impl Parser {
                     method_name,
                 }))
             }
-            TokenType::Number(value) => Ok(self.expr(ExprKind::Literal(Literal::Number(value)))),
-            TokenType::String(value) => Ok(self.expr(ExprKind::Literal(Literal::String(value)))),
+            TokenType::Number(value) => Ok(self.expr(ExprKind::Literal(Literal::Number(*value)))),
+            TokenType::String(value) => {
+                Ok(self.expr(ExprKind::Literal(Literal::String(value.clone()))))
+            }
             TokenType::LeftParen => {
                 let expr = self.expression()?;
                 self.consume(TokenType::RightParen, "Expect ')' after expression.")?;
@@ -617,7 +630,10 @@ impl Parser {
                     expression: Box::new(expr),
                 }))
             }
-            TokenType::Identifier(name) => Ok(self.expr(ExprKind::Variable { name })),
+            TokenType::Identifier(name_ref) => {
+                let name = name_ref.clone();
+                Ok(self.expr(ExprKind::Variable { token, name }))
+            }
             _ => Err(LoxError::SyntaxError {
                 token,
                 message: "Expect expression".to_string(),

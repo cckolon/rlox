@@ -139,6 +139,7 @@ impl Hash for Expr {
 pub enum ExprKind {
     Assign {
         name: String,
+        token: Token,
         value: Box<Expr>,
     },
     Binary {
@@ -161,6 +162,7 @@ pub enum ExprKind {
     },
     Variable {
         name: String,
+        token: Token,
     },
     Call {
         callee: Box<Expr>,
@@ -205,12 +207,17 @@ pub enum Stmt {
         then_branch: Box<Stmt>,
         else_branch: Option<Box<Stmt>>,
     },
-    Function(Rc<FunctionDeclaration>),
+    // TODO: does this need to be an RC? I think it can be a bare value
+    Function {
+        declaration: Rc<FunctionDeclaration>,
+    },
+    // TODO: these tokens are not consistent. Sometimes it's the identifier and sometimes it's the keyword.
     Return {
         token: Token,
         value: Option<Expr>,
     },
     Class {
+        token: Token,
         name: String,
         methods: Vec<FunctionDeclaration>,
         superclass: Option<Expr>,
@@ -219,6 +226,7 @@ pub enum Stmt {
 
 #[derive(Debug, Clone)]
 pub struct FunctionDeclaration {
+    pub token: Token,
     pub name: String,
     pub params: Vec<String>,
     pub body: Vec<Stmt>,
