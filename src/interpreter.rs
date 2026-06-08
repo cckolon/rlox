@@ -389,7 +389,7 @@ impl Interpreter {
                 Ok(Literal::Nil)
             }
             ExprKind::This { token } => {
-                return self.look_up_variable(&"this".to_string(), token, expr);
+                return self.look_up_variable("this", token, expr);
             }
             ExprKind::Super {
                 keyword,
@@ -439,7 +439,7 @@ impl Interpreter {
 
     fn look_up_variable(
         &self,
-        name: &String,
+        name: &str,
         token: &Token,
         expr: &Expr,
     ) -> Result<Literal, LoxError> {
