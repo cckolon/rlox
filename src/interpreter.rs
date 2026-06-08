@@ -388,7 +388,9 @@ impl Interpreter {
                 // TODO: maybe should return the value here, check the spec
                 Ok(Literal::Nil)
             }
-            ExprKind::This { token } => return self.look_up_variable(&token.lexeme, token, expr),
+            ExprKind::This { token } => {
+                return self.look_up_variable(&"this".to_string(), token, expr);
+            }
             ExprKind::Super {
                 keyword,
                 method,

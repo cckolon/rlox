@@ -228,7 +228,7 @@ impl<'a> Resolver<'a> {
                         message: "Can't use 'this' outside a class.".to_string(),
                     });
                 }
-                self.resolve_local(expression, token.lexeme.clone());
+                self.resolve_local(expression, "this".to_string());
             }
             ExprKind::Super {
                 keyword,
@@ -247,7 +247,7 @@ impl<'a> Resolver<'a> {
                         message: "Cannot use 'super' in a class that is not a subclass".to_string(),
                     });
                 }
-                ClassType::Subclass => self.resolve_local(expression, &keyword.lexeme),
+                ClassType::Subclass => self.resolve_local(expression, "super".to_string()),
             },
         }
         Ok(())

@@ -83,7 +83,12 @@ impl LoxInstance {
         }
         if let Some(method) = instance.borrow().class.find_method(identifier) {
             return Ok(Literal::Callable(LoxCallable::UserFunction(
-                method.bind(instance, name.lexeme == "init").clone(),
+                method
+                    .bind(
+                        instance,
+                        name.token_type == TokenType::Identifier("init".to_string()),
+                    )
+                    .clone(),
             )));
         }
         return Err(LoxError::RuntimeError {
@@ -93,7 +98,12 @@ impl LoxInstance {
     }
 
     pub fn set(&mut self, name: Token, value: Literal) {
-        self.fields.insert(name.lexeme, value);
+        match name.token_type {
+            TokenType::Identifier(lexeme) => {
+                self.fields.insert(lexeme, value);
+            }
+            _ => panic!("Field name is not an identifier"),
+        }
     }
 }
 

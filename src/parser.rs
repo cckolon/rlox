@@ -13,7 +13,6 @@ pub struct Parser {
     next_expr_id: usize,
 }
 
-// TODO: this whole thing could use less memory by actually consuming each token rather than leaving the vector intact
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         Parser {
@@ -88,7 +87,10 @@ impl Parser {
             "Expect ';' after variable declaration",
         )?;
         Ok(Stmt::Var {
-            name: identifier_token.lexeme.clone(),
+            name: match &identifier_token.token_type {
+                TokenType::Identifier(name) => name.clone(),
+                _ => panic!("Identifier token is not an identifier"),
+            },
             token: identifier_token,
             initializer,
         })

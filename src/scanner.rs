@@ -1,112 +1,126 @@
+use std::{iter::Peekable, str::Chars};
+
 use crate::{errors::LoxError, token::Token, token_type::TokenType};
 
-pub struct Scanner {
-    source: String,
-    pub tokens: Vec<Token>,
-    start: usize,
-    current: usize,
+pub struct Scanner<'a> {
+    chars: Peekable<Chars<'a>>,
     line: usize,
 }
 
-impl Scanner {
-    pub fn new(source: String) -> Self {
+impl<'a> Iterator for Scanner<'a> {
+    type Item = Result<Token, LoxError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let Some(first_char) = self.advance() else {
+                return None;
+            };
+            let next_token_type = self.get_next_token_type(first_char);
+            match next_token_type {
+                Ok(Some(token_type)) => {
+                    return Some(Ok(Token {
+                        token_type,
+                        line: self.line,
+                    }));
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    return Some(Err(e));
+                }
+            }
+        }
+    }
+}
+
+impl<'a> Scanner<'a> {
+    pub fn new(source: &'a str) -> Self {
         Scanner {
-            source,
-            tokens: Vec::new(),
-            start: 0,
-            current: 0,
+            chars: source.chars().peekable(),
             line: 1,
         }
     }
 
-    pub fn scan_tokens(mut self) -> Result<Vec<Token>, LoxError> {
-        while !self.is_at_end() {
-            self.start = self.current;
-            self.scan_token()?
-        }
-        Ok(self.tokens)
-    }
-
-    fn scan_token(&mut self) -> Result<(), LoxError> {
-        let c = self.advance();
-        match c {
-            '(' => Ok(self.add_token(TokenType::LeftParen)),
-            ')' => Ok(self.add_token(TokenType::RightParen)),
-            '{' => Ok(self.add_token(TokenType::LeftBrace)),
-            '}' => Ok(self.add_token(TokenType::RightBrace)),
-            ',' => Ok(self.add_token(TokenType::Comma)),
-            '.' => Ok(self.add_token(TokenType::Dot)),
-            '-' => Ok(self.add_token(TokenType::Minus)),
-            '+' => Ok(self.add_token(TokenType::Plus)),
-            ';' => Ok(self.add_token(TokenType::Semicolon)),
-            '*' => Ok(self.add_token(TokenType::Star)),
+    fn get_next_token_type(&mut self, first_char: char) -> Result<Option<TokenType>, LoxError> {
+        match first_char {
+            '(' => Ok(Some(TokenType::LeftParen)),
+            ')' => Ok(Some(TokenType::RightParen)),
+            '{' => Ok(Some(TokenType::LeftBrace)),
+            '}' => Ok(Some(TokenType::RightBrace)),
+            ',' => Ok(Some(TokenType::Comma)),
+            '.' => Ok(Some(TokenType::Dot)),
+            '-' => Ok(Some(TokenType::Minus)),
+            '+' => Ok(Some(TokenType::Plus)),
+            ';' => Ok(Some(TokenType::Semicolon)),
+            '*' => Ok(Some(TokenType::Star)),
             '!' => {
-                let token_match = self.token_match('=');
-                self.add_token(if token_match {
-                    TokenType::BangEqual
+                if let Some(t) = self.chars.peek()
+                    && *t == '='
+                {
+                    self.advance();
+                    Ok(Some(TokenType::BangEqual))
                 } else {
-                    TokenType::Bang
-                });
-                Ok(())
+                    Ok(Some(TokenType::Bang))
+                }
             }
             '=' => {
-                let token_match = self.token_match('=');
-                self.add_token(if token_match {
-                    TokenType::EqualEqual
+                if let Some(t) = self.chars.peek()
+                    && *t == '='
+                {
+                    self.advance();
+                    Ok(Some(TokenType::EqualEqual))
                 } else {
-                    TokenType::Equal
-                });
-                Ok(())
+                    Ok(Some(TokenType::Equal))
+                }
             }
             '<' => {
-                let token_match = self.token_match('=');
-                self.add_token(if token_match {
-                    TokenType::LessEqual
+                if let Some(t) = self.chars.peek()
+                    && *t == '='
+                {
+                    self.advance();
+                    Ok(Some(TokenType::LessEqual))
                 } else {
-                    TokenType::Less
-                });
-                Ok(())
+                    Ok(Some(TokenType::Less))
+                }
             }
             '>' => {
-                let token_match = self.token_match('=');
-                self.add_token(if token_match {
-                    TokenType::GreaterEqual
+                if let Some(t) = self.chars.peek()
+                    && *t == '='
+                {
+                    self.advance();
+                    Ok(Some(TokenType::GreaterEqual))
                 } else {
-                    TokenType::Greater
-                });
-                Ok(())
+                    Ok(Some(TokenType::Greater))
+                }
             }
             '/' => {
-                let token_match = self.token_match('/');
-                if token_match {
+                if let Some(c) = self.chars.peek()
+                    && c == &'/'
+                {
                     // comment
                     loop {
-                        if self.peek() == Some('\n') {
+                        let c = self.advance();
+                        if c == Some('\n') || c == None {
                             break;
                         }
-                        if self.is_at_end() {
-                            break;
-                        }
-                        self.advance();
                     }
+                    Ok(None)
                 } else {
-                    self.add_token(TokenType::Slash)
+                    Ok(Some(TokenType::Slash))
                 }
-                Ok(())
             }
-            ' ' => Ok(()),
-            '\r' => Ok(()),
-            '\t' => Ok(()),
+            ' ' => Ok(None),
+            '\r' => Ok(None),
+            '\t' => Ok(None),
             '\n' => {
                 self.line += 1;
-                Ok(())
+                Ok(None)
             }
-            '"' => self.string(),
+            '"' => Ok(Some(self.string()?)),
             c => {
                 if c.is_ascii_digit() {
-                    self.number()
-                } else if c.is_alphabetic() {
-                    self.identifier()
+                    Ok(Some(self.number(c)?))
+                } else if c.is_alphabetic() || c == '_' {
+                    Ok(Some(self.identifier(c)?))
                 } else {
                     Err(LoxError::ScannerError {
                         line: self.line,
@@ -118,102 +132,61 @@ impl Scanner {
         }
     }
 
-    fn advance(&mut self) -> char {
-        let next_char = self.source.chars().nth(self.current).unwrap();
-        self.current += 1;
-        next_char
+    fn advance(&mut self) -> Option<char> {
+        self.chars.next()
     }
 
-    fn peek(&self) -> Option<char> {
-        if self.is_at_end() {
-            None
-        } else {
-            self.source.chars().nth(self.current)
-        }
-    }
-
-    fn is_at_end(&self) -> bool {
-        self.current >= self.source.chars().count()
-    }
-
-    fn add_token(&mut self, token_type: TokenType) {
-        let text = self.substring(self.start, self.current);
-        self.tokens.append(&mut vec![Token {
-            token_type,
-            lexeme: text,
-            line: self.line,
-        }])
-    }
-
-    fn token_match(&mut self, expected: char) -> bool {
-        if self.is_at_end() {
-            false
-        } else if self.source.chars().nth(self.current) != Some(expected) {
-            false
-        } else {
-            self.current += 1;
-            true
-        }
-    }
-
-    fn string(&mut self) -> Result<(), LoxError> {
+    fn string(&mut self) -> Result<TokenType, LoxError> {
+        let mut accumulator = "".to_string();
         loop {
-            let peeked = self.peek();
-            if peeked == Some('"') {
+            let peeked = self.chars.peek();
+            if peeked == Some(&'"') {
                 break;
             }
-            if self.is_at_end() {
-                break;
+            if peeked.is_none() {
+                return Err(LoxError::ScannerError {
+                    line: self.line,
+                    // TODO: this should really be the final character in the source
+                    character: '"',
+                    message: "Unterminated string".to_string(),
+                });
             }
-            if peeked == Some('\n') {
+            if peeked == Some(&'\n') {
                 self.line += 1;
             }
-            self.advance();
-        }
-        if self.is_at_end() {
-            let character = self
-                .source
-                .chars()
-                .nth(self.current - 1)
-                .expect("Can't get last char of file containing at least this token: \"");
-            return Err(LoxError::ScannerError {
-                line: self.line,
-                character,
-                message: "Unterminated string".to_string(),
-            });
+            accumulator.push(self.advance().unwrap());
         }
         self.advance();
-        let value = self.substring(self.start + 1, self.current - 1);
-        self.add_token(TokenType::String(value));
-        Ok(())
+        Ok(TokenType::String(accumulator))
     }
 
-    fn number(&mut self) -> Result<(), LoxError> {
-        self.loop_through_digits();
-        let peeked = self.peek();
-        let peeked_next: Option<char> = self.peek_next();
-        if peeked == Some('.')
-            && let Some(c) = peeked_next
-        {
-            if c.is_ascii_digit() {
-                // consume the dot
-                self.advance();
-                self.loop_through_digits();
+    fn number(&mut self, first_char: char) -> Result<TokenType, LoxError> {
+        let before_dot = format!("{}{}", first_char, self.loop_through_digits());
+        // TODO: can minimize peeking here
+        let after_dot = if self.chars.peek() == Some(&'.') {
+            self.advance();
+            if let Some(c) = self.chars.peek()
+                && c.is_ascii_digit()
+            {
+                Some(self.loop_through_digits())
+            } else {
+                None
             }
-        }
-        let literal_string = self.substring(self.start, self.current);
+        } else {
+            None
+        };
+        let literal_string = match after_dot {
+            None => before_dot,
+            Some(value) => format!("{}.{}", before_dot, value),
+        };
         let parsed_literal = literal_string.parse().expect("Failed to parse float");
-        self.add_token(TokenType::Number(parsed_literal));
-        Ok(())
+        Ok(TokenType::Number(parsed_literal))
     }
 
-    fn substring(&self, start: usize, end: usize) -> String {
-        self.source.chars().skip(start).take(end - start).collect()
-    }
-
-    fn loop_through_digits(&mut self) {
+    fn loop_through_digits(&mut self) -> String {
+        let mut accum = "".to_string();
         loop {
-            let peeked = self.peek();
+            let peeked = self.chars.peek();
             match peeked {
                 None => {
                     break;
@@ -222,42 +195,31 @@ impl Scanner {
                     if !c.is_ascii_digit() {
                         break;
                     }
-                    self.advance()
+                    accum.push(self.advance().unwrap());
                 }
             };
         }
+        accum
     }
 
-    fn peek_next(&self) -> Option<char> {
-        if self.current + 1 >= self.source.chars().count() {
-            None
-        } else {
-            self.source.chars().nth(self.current + 1)
-        }
-    }
-
-    fn identifier(&mut self) -> Result<(), LoxError> {
+    fn identifier(&mut self, first_char: char) -> Result<TokenType, LoxError> {
+        let mut accumulator = first_char.to_string();
         loop {
-            let peeked = self.peek();
+            let peeked = self.chars.peek();
             if let Some(c) = peeked
-                && (c.is_alphanumeric() || c == '_')
+                && (c.is_alphanumeric() || c == &'_')
             {
-                self.advance();
+                let next = self.advance().unwrap();
+                accumulator.push(next);
             } else {
                 break;
             }
         }
-        let text = self.substring(self.start, self.current);
-        let keyword_type = self.match_keyword(&text);
+        let keyword_type = self.match_keyword(&accumulator);
         match keyword_type {
-            Some(t) => {
-                self.add_token(t);
-            }
-            None => {
-                self.add_token(TokenType::Identifier(text));
-            }
+            Some(t) => Ok(t),
+            None => Ok(TokenType::Identifier(accumulator)),
         }
-        Ok(())
     }
 
     fn match_keyword(&self, keyword: &str) -> Option<TokenType> {

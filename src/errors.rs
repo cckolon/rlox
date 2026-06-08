@@ -44,21 +44,21 @@ impl fmt::Display for LoxError {
                 write!(
                     f,
                     "Syntax error on line {} at token {}: {}",
-                    token.line, token.lexeme, message
+                    token.line, token, message
                 )
             }
             Self::RuntimeError { token, message } => {
                 write!(
                     f,
                     "Runtime error on line {} at token {}: {}",
-                    token.line, token.lexeme, message
+                    token.line, token, message
                 )
             }
             Self::ResolutionError { token, message } => {
                 write!(
                     f,
                     "Resolution error on line {} at token {}: {}",
-                    token.line, token.lexeme, message
+                    token.line, token, message
                 )
             }
             Self::InternalError(message) => write!(f, "Internal error: {message}"),
