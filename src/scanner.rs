@@ -2,7 +2,11 @@ use std::{iter::Peekable, str::Chars};
 
 use crate::{errors::LoxError, token::Token, token_type::TokenType};
 
-pub struct Scanner<'a> {
+pub fn scan(source: &str) -> impl Iterator<Item = Result<Token, LoxError>> {
+    Scanner::new(source)
+}
+
+struct Scanner<'a> {
     chars: Peekable<Chars<'a>>,
     line: usize,
 }

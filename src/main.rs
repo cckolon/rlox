@@ -3,12 +3,12 @@ use std::fs;
 use std::io;
 use std::process;
 
+use crate::ast::Stmt;
 use crate::errors::LoxError;
 use crate::interpreter::Interpreter;
-use crate::parser::Parser;
+use crate::parser::parse;
 use crate::resolver::Resolver;
-use crate::scanner::Scanner;
-use crate::token::Token;
+use crate::scanner::scan;
 
 mod ast;
 mod class;
@@ -79,11 +79,7 @@ impl Lox {
     }
 
     fn run(&mut self, source: String) -> Result<(), LoxError> {
-        let scanner = Scanner::new(&source);
-        let tokens: Result<Vec<Token>, LoxError> = scanner.collect();
-        // TODO: make parser accept an iterator rather than a vector
-        let mut parser = Parser::new(tokens?);
-        let statements = parser.parse()?;
+        let statements = parse(scan(&source)).collect::<Result<Vec<Stmt>, LoxError>>()?;
         let mut resolver = Resolver::new(&mut self.interpreter);
         resolver.resolve_multiple_statements(&statements)?;
         self.interpreter.interpret(statements)

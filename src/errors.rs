@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::{ast::Literal, token::Token};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum LoxError {
     ScannerError {
         line: usize,
